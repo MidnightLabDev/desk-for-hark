@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.3
+
+**Fixed**
+- **Notifications for new messages**: Hark's web app doesn't always send a browser notification inside the app, so new replies could arrive silently. The app now watches for new messages itself while the window is hidden, minimised or in the background, and shows a Windows notification (at most one every 15 seconds).
+
+**New**
+- **Tray > Send a test notification**, to check that Windows is showing the app's notifications.
+
 ## 1.3.2
 
 **Fixed**

@@ -120,6 +120,50 @@
   }
   setInterval(checkTitle, 2000);
 
+  // ---- New-reply notifications -------------------------------------------
+  // Hark's web app doesn't always raise a browser notification (and web push
+  // can't reach an embedded WebView2), so the app watches the page itself:
+  // when new text appears while the window isn't focused, and then stays
+  // quiet for a few seconds (a reply has finished streaming in), it asks the
+  // app for a Windows notification. The app only shows it when the window is
+  // hidden, minimised or in the background, and at most one every 15 seconds.
+  var replyText = "", replyTimer = 0;
+  var SKIP = "script,style,noscript,textarea,input,nav,aside,[contenteditable=true],[role=navigation],[aria-hidden=true]";
+  function textOf(n) {
+    if (n.nodeType === 3) {
+      var p = n.parentElement;
+      return p && !p.closest(SKIP) ? n.nodeValue : "";
+    }
+    if (n.nodeType !== 1 || n.closest(SKIP) || n.id === "desk-offline") return "";
+    if (n.tagName === "CANVAS" || n.tagName === "SVG") return "";
+    return n.innerText || n.textContent || "";
+  }
+  function flushReply() {
+    replyTimer = 0;
+    var t = replyText.replace(/\s+/g, " ").trim();
+    replyText = "";
+    if (t.length < 20 || document.hasFocus()) return;
+    if (t.length > 160) t = "…" + t.slice(-160);
+    quiet(invoke("new_reply", { body: t }));
+  }
+  function startReplyWatch() {
+    if (!document.body) return setTimeout(startReplyWatch, 500);
+    new MutationObserver(function (list) {
+      if (document.hasFocus()) { replyText = ""; return; }
+      var add = "";
+      list.forEach(function (m) {
+        if (m.type === "characterData") add += " " + textOf(m.target).slice(-200);
+        else m.addedNodes.forEach(function (n) { add += " " + textOf(n); });
+      });
+      if (add.replace(/\s+/g, "").length < 2) return;
+      replyText = (replyText + add).slice(-4000);
+      clearTimeout(replyTimer);
+      replyTimer = setTimeout(flushReply, 3000);
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+  // Give Hark a moment to render the first page before watching.
+  setTimeout(startReplyWatch, 4000);
+
   // ---- Themes -----------------------------------------------------------
   // Hark's design tokens (CSS custom properties) are overridden with
   // !important so they beat Hark's own :root[data-theme] rules.

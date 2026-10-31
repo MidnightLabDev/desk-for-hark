@@ -960,9 +960,42 @@ fn notify(app: AppHandle, title: String, body: Option<String>) {
         b = b.body(body.chars().take(500).collect::<String>());
     }
     let _ = b.show();
+    mark_toast();
     if !main_is_focused(&app) {
         set_badge(&app, true);
     }
+}
+
+/// When the last Windows notification for a Hark message went out, so a
+/// notification from Hark itself and the app's own reply watcher don't both
+/// fire for the same message.
+static LAST_TOAST: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+fn toast_recently(secs: u64) -> bool {
+    LAST_TOAST
+        .lock()
+        .ok()
+        .and_then(|t| *t)
+        .map(|t| t.elapsed() < Duration::from_secs(secs))
+        .unwrap_or(false)
+}
+
+fn mark_toast() {
+    if let Ok(mut t) = LAST_TOAST.lock() {
+        *t = Some(Instant::now());
+    }
+}
+
+/// From the page's reply watcher: new text arrived while the window wasn't focused.
+#[tauri::command]
+fn new_reply(app: AppHandle, body: String) {
+    if main_is_focused(&app) || toast_recently(15) {
+        return;
+    }
+    mark_toast();
+    let body: String = body.chars().take(200).collect();
+    notify_text(&app, "New message in Hark", &body);
+    set_badge(&app, true);
 }
 
 #[tauri::command]
@@ -1187,6 +1220,7 @@ fn main() {
         )
         .invoke_handler(tauri::generate_handler![
             notify,
+            new_reply,
             badge,
             zoom,
             open_external,
@@ -1335,6 +1369,7 @@ fn main() {
             let quick = MenuItem::with_id(app, "quick", "Quick Ask…", true, None::<&str>)?;
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
+            let test_toast = MenuItem::with_id(app, "test_toast", "Send a test notification", true, None::<&str>)?;
 
             let zoom_in = MenuItem::with_id(app, "zoom_in", "Zoom in", true, None::<&str>)?;
             let zoom_out = MenuItem::with_id(app, "zoom_out", "Zoom out", true, None::<&str>)?;
@@ -1381,6 +1416,7 @@ fn main() {
                     &quick,
                     &shot,
                     &reload,
+                    &test_toast,
                     &PredefinedMenuItem::separator(app)?,
                     &theme_menu,
                     &view_menu,
@@ -1436,6 +1472,11 @@ fn main() {
                         "quick" => show_quick(app),
                         "screenshot" => screenshot_to_hark(app),
                         "reload" => reload_main(app),
+                        "test_toast" => notify_text(
+                            app,
+                            "Desk for Hark",
+                            "Test notification. If you can see this, Windows notifications are working.",
+                        ),
                         "zoom_in" => apply_zoom(app, "in"),
                         "zoom_out" => apply_zoom(app, "out"),
                         "zoom_reset" => apply_zoom(app, "reset"),
