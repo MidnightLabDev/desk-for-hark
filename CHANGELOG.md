@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+
+**Changed**
+- **Check for updates (manual)…** in the tray now opens the latest release on GitHub. Download the new installer and run it over your current version; your settings and sign-in are kept. Automatic updates will come back once signed update files are published.
+
 ## 1.3.0
 
 **Improved**

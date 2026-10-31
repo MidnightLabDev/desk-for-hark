@@ -33,6 +33,7 @@ use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 pub const MAIN: &str = "main";
+const RELEASES_URL: &str = "https://github.com/MidnightLabDev/desk-for-hark/releases/latest";
 const QUICK: &str = "quick";
 const SETTINGS_WIN: &str = "settings";
 const TRAY_ID: &str = "desk-tray";
@@ -1354,7 +1355,7 @@ fn main() {
 
             let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let restart = MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?;
-            let updates = MenuItem::with_id(app, "updates", "Check for updates…", true, None::<&str>)?;
+            let updates = MenuItem::with_id(app, "updates", "Check for updates (manual)…", true, None::<&str>)?;
             let about = MenuItem::with_id(app, "about", "About Desk for Hark", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Desk for Hark", true, None::<&str>)?;
 
@@ -1450,7 +1451,9 @@ fn main() {
                             save_state(app);
                             app.restart();
                         }
-                        "updates" => check_for_updates(app.clone(), true),
+                        // Manual for now: self-update needs signed update files,
+                        // which aren't published yet, so open the releases page.
+                        "updates" => open_in_browser(app, RELEASES_URL),
                         "about" => show_about(app),
                         "quit" => quit(app),
                         _ => {}

@@ -13,7 +13,9 @@ Grab the latest installer from [Releases](https://github.com/MidnightLabDev/desk
 - **`Desk.for.Hark_x.y.z_x64-setup.exe`** (recommended)
 - `Desk.for.Hark_x.y.z_x64_en-US.msi` (for managed installs)
 
-Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk for Hark` and updates itself.
+Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk for Hark`.
+
+**Updates are manual for now.** **Tray > Check for updates (manual)…** opens the [latest release](https://github.com/MidnightLabDev/desk-for-hark/releases/latest); download the new installer and run it over your current version. Your settings and sign-in are kept.
 
 > The installers aren't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
 
