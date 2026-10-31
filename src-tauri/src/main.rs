@@ -775,7 +775,7 @@ fn toggle_compact(app: &AppHandle) {
     };
     if let Some(item) = state.compact_item.lock().unwrap().as_ref() {
         let _ = item.set_checked(now_compact);
-    }
+    };
 }
 
 // ----------------------------------------------------------- Send To menu
@@ -1033,7 +1033,7 @@ fn save_settings(app: AppHandle, webview: Webview, settings: serde_json::Value, 
         let _ = if on { al.enable() } else { al.disable() };
         if let Some(item) = app.state::<AppState>().autostart_item.lock().unwrap().as_ref() {
             let _ = item.set_checked(al.is_enabled().unwrap_or(on));
-        }
+        };
     }
     set_always_on_top(&app, on_top);
     if let Some(w) = main_window(&app) {

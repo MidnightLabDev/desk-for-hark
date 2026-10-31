@@ -2,7 +2,7 @@
 //! sequence, simulated Ctrl+C, registry reads, and WebView2 event hooks
 //! (microphone permission, crash recovery, offline detection, Save dialogs).
 
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
