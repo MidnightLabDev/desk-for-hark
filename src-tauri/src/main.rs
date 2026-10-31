@@ -267,11 +267,32 @@ fn show_main(app: &AppHandle) {
     set_badge(app, false);
 }
 
+/// When the main window last lost focus. Clicking the tray icon or its menu
+/// takes focus away from the window a moment before we're asked to toggle,
+/// so "was focused a moment ago" counts as focused. Without this, Show / Hide
+/// from the tray could only ever show.
+static LAST_BLUR: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+fn mark_blur() {
+    if let Ok(mut t) = LAST_BLUR.lock() {
+        *t = Some(std::time::Instant::now());
+    }
+}
+
+fn recently_focused() -> bool {
+    LAST_BLUR
+        .lock()
+        .ok()
+        .and_then(|t| *t)
+        .map(|t| t.elapsed() < Duration::from_millis(700))
+        .unwrap_or(false)
+}
+
 fn toggle_main(app: &AppHandle) {
     if let Some(w) = main_window(app) {
         let visible = w.is_visible().unwrap_or(false);
         let minimized = w.is_minimized().unwrap_or(false);
-        let focused = w.is_focused().unwrap_or(false);
+        let focused = w.is_focused().unwrap_or(false) || recently_focused();
         if visible && !minimized && focused {
             let _ = w.hide();
         } else {
@@ -1275,6 +1296,7 @@ fn main() {
                     let _ = w.hide();
                 }
                 WindowEvent::Focused(true) => set_badge(&focus_handle, false),
+                WindowEvent::Focused(false) => mark_blur(),
                 _ => {}
             });
 
@@ -1398,7 +1420,19 @@ fn main() {
                         return;
                     }
                     match id.as_str() {
-                        "toggle" => toggle_main(app),
+                        // An explicit menu choice: open means hide, whatever has focus.
+                        "toggle" => {
+                            let open = main_window(app)
+                                .map(|w| w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false))
+                                .unwrap_or(false);
+                            if open {
+                                if let Some(w) = main_window(app) {
+                                    let _ = w.hide();
+                                }
+                            } else {
+                                show_main(app);
+                            }
+                        }
                         "quick" => show_quick(app),
                         "screenshot" => screenshot_to_hark(app),
                         "reload" => reload_main(app),

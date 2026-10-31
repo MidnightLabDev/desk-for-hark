@@ -2,6 +2,9 @@
 
 ## 1.3.2
 
+**Fixed**
+- **Show / Hide** in the tray, and clicking the tray icon, now hide the window when it's open. Before, they could only show it.
+
 **Removed**
 - **Print or save as PDF**: the tray item is gone and `Ctrl+P` no longer opens the print dialog.
 
