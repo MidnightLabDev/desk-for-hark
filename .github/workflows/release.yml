@@ -40,6 +40,21 @@ jobs:
           if ($env:SIGN_COMMAND) { $cfg.bundle.windows.signCommand = $env:SIGN_COMMAND; "Code signing: on" } else { "Code signing: off (no WINDOWS_SIGN_COMMAND)" }
           $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM src-tauri/tauri.ci.conf.json
 
+      # Release notes = this version's section of CHANGELOG.md.
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $lines = Get-Content CHANGELOG.md
+          $start = [Array]::IndexOf($lines, "## $version")
+          $notes = @()
+          if ($start -ge 0) {
+            for ($i = $start + 1; $i -lt $lines.Count -and -not $lines[$i].StartsWith('## '); $i++) { $notes += $lines[$i] }
+          } else { $notes = @("See CHANGELOG.md.") }
+          $body = ($notes -join "`n").Trim()
+          $eof = "EOF_" + [guid]::NewGuid().ToString("N")
+          "RELEASE_NOTES<<$eof`n$body`n$eof" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -54,6 +69,9 @@ jobs:
           tagName: v__VERSION__
           releaseName: 'Desk for Hark v__VERSION__'
           releaseBody: |
+            ${{ env.RELEASE_NOTES }}
+
+            ---
             Desk for Hark, an unofficial Windows desktop app for Hark. Not affiliated with Hark.
             Download the -setup.exe (recommended) or the .msi below. Installed copies update themselves.
             If SmartScreen appears, click "More info", then "Run anyway".

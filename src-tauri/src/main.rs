@@ -47,6 +47,7 @@ const THEMES: &[(&str, &str)] = &[
     ("midnight", "Midnight (OLED)"),
     ("teal", "Teal"),
     ("paper", "Paper (light)"),
+    ("christmas", "Christmas"),
     ("contrast", "High contrast"),
     ("windows", "Follow Windows"),
     ("schedule", "Scheduled (dark at night)"),
@@ -112,6 +113,8 @@ struct Settings {
     ask_where_to_save: bool,
     /// Put your clipboard back after "Send selection".
     restore_clipboard: bool,
+    /// Light snowfall with the Christmas theme.
+    snow: bool,
 }
 
 impl Default for Settings {
@@ -142,6 +145,7 @@ impl Default for Settings {
             auto_grant_mic: true,
             ask_where_to_save: true,
             restore_clipboard: true,
+            snow: true,
         }
     }
 }
@@ -413,6 +417,7 @@ fn theme_payload(app: &AppHandle) -> serde_json::Value {
         "scheduleDark": s.schedule_dark,
         "scheduleLight": s.schedule_light,
         "voiceSelector": s.voice_button_selector,
+        "snow": s.snow,
     })
 }
 
@@ -1299,6 +1304,7 @@ fn main() {
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
             let print = MenuItem::with_id(app, "print", "Print or save as PDF…", true, None::<&str>)?;
+            let groups = MenuItem::with_id(app, "groups", "Project groups…\tCtrl+Shift+G", true, None::<&str>)?;
 
             let zoom_in = MenuItem::with_id(app, "zoom_in", "Zoom in", true, None::<&str>)?;
             let zoom_out = MenuItem::with_id(app, "zoom_out", "Zoom out", true, None::<&str>)?;
@@ -1346,6 +1352,7 @@ fn main() {
                     &shot,
                     &reload,
                     &print,
+                    &groups,
                     &PredefinedMenuItem::separator(app)?,
                     &theme_menu,
                     &view_menu,
@@ -1392,6 +1399,10 @@ fn main() {
                         "print" => {
                             show_main(app);
                             eval_main(app, "window.print()");
+                        }
+                        "groups" => {
+                            show_main(app);
+                            eval_main(app, "window.__deskGroups&&window.__deskGroups.toggle(true)");
                         }
                         "zoom_in" => apply_zoom(app, "in"),
                         "zoom_out" => apply_zoom(app, "out"),

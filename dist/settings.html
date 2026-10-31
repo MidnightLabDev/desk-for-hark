@@ -36,10 +36,11 @@ a{color:var(--accent)}
   <div class="row"><label>Theme</label>
     <select id="theme">
       <option value="hark">Hark (default)</option><option value="midnight">Midnight (OLED)</option>
-      <option value="teal">Teal</option><option value="paper">Paper (light)</option>
+      <option value="teal">Teal</option><option value="paper">Paper (light)</option><option value="christmas">Christmas</option>
       <option value="contrast">High contrast</option><option value="windows">Follow Windows</option>
       <option value="schedule">Scheduled (dark at night)</option>
     </select></div>
+  <div class="row" id="snowRow"><label>Snowfall<small>For the Christmas theme; it never blocks clicks</small></label><input type="checkbox" id="snow"></div>
   <div class="row" id="schedRow"><label>Dark from / light from<small>For the Scheduled theme</small></label>
     <div class="inline"><input type="time" id="scheduleDark" style="width:110px"><input type="time" id="scheduleLight" style="width:110px"></div></div>
   <div class="row"><label>Accent colour<small>Links, highlights and selection</small></label>
@@ -93,7 +94,7 @@ a{color:var(--accent)}
 <script>
 const invoke = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a || {});
 const $ = id => document.getElementById(id);
-const BOOL = ["compact","customCss","mica","autostart","startHidden","alwaysOnTop","sendTo","askWhereToSave","autoGrantMic","restoreClipboard"];
+const BOOL = ["compact","customCss","mica","autostart","startHidden","alwaysOnTop","sendTo","askWhereToSave","autoGrantMic","restoreClipboard","snow"];
 const TEXT = ["theme","fontFamily","trayIcon","hotkey","fallbackHotkey","quickAskHotkey","screenshotHotkey","selectionHotkey","voiceHotkey","voiceButtonSelector","scheduleDark","scheduleLight"];
 const NUM = ["fontScale","zoom"];
 const HOTKEYS = ["hotkey","fallbackHotkey","quickAskHotkey","screenshotHotkey","selectionHotkey","voiceHotkey"];
@@ -111,7 +112,11 @@ function fill(s) {
   NUM.forEach(k => $(k).value = nearest(k, +s[k] || 1));
   $("accentOn").checked = !!s.accent;
   if (s.accent) $("accent").value = s.accent;
-  $("schedRow").style.display = s.theme === "schedule" ? "" : "none";
+  themeRows();
+}
+function themeRows() {
+  $("schedRow").style.display = $("theme").value === "schedule" ? "" : "none";
+  $("snowRow").style.display = $("theme").value === "christmas" ? "" : "none";
 }
 function collect() {
   const s = Object.assign({}, current);
@@ -134,7 +139,7 @@ async function save(restart) {
     $("note").textContent = "Couldn't save those settings.";
   }
 }
-$("theme").addEventListener("change", () => $("schedRow").style.display = $("theme").value === "schedule" ? "" : "none");
+$("theme").addEventListener("change", themeRows);
 $("save").onclick = () => save(false);
 $("saveRestart").onclick = () => save(true);
 $("cancel").onclick = () => window.close();

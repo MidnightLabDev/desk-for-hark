@@ -37,9 +37,15 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - Single instance, remembers its size and position, closes to the tray.
 
 **Themes**
-- **Hark** (default), **Midnight** (true black), **Teal**, **Paper** (light), **High contrast**, **Follow Windows** (light/dark and your accent colour) and **Scheduled** (dark at night, light by day, at times you choose).
+- **Hark** (default), **Midnight** (true black), **Teal**, **Paper** (warm light, built on Hark's own light mode), **Christmas** (pine green, cranberry and gold, with optional snowfall that never blocks clicks), **High contrast**, **Follow Windows** (light/dark and your accent colour) and **Scheduled** (dark at night, light by day, at times you choose).
 - Accent colour, font, text size and compact spacing.
 - `theme.css` for your own CSS, reloaded live when you save it.
+
+**Project groups**
+- Sort your Hark projects into groups you name and colour. Open with `Ctrl+Shift+G` or **Tray > Project groups…**.
+- Add the open project to a group, drag projects between groups, collapse groups, and click a project to open it.
+- Grouped projects get a coloured dot in Hark's sidebar.
+- Groups are saved on this PC only. They don't change Hark and don't sync to the web or your phone.
 
 **Reliability**
 - A clean offline screen that reconnects by itself.
@@ -52,6 +58,10 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 Everything is configurable from **Tray > Settings…**.
 
 > Quick Ask, Send selection, screenshots, Send to and the voice hotkey work by typing into, pasting into or clicking Hark's page. If Hark changes its layout, some of them may need an update.
+
+## What's new
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Privacy
 
@@ -78,7 +88,7 @@ Icons are generated from `assets/`: `python assets/make_icon.py`, `python assets
 
 ## Releases (maintainers)
 
-Every push to `main` builds the installers on GitHub Actions and publishes a release tagged `v<version>` (bump `version` in `src-tauri/tauri.conf.json`).
+Every push to `main` builds the installers on GitHub Actions and publishes a release tagged `v<version>` (bump `version` in `src-tauri/tauri.conf.json`). The release notes come from that version's section in [CHANGELOG.md](CHANGELOG.md), so add one with every change.
 
 | Name | Kind | Purpose |
 |---|---|---|
