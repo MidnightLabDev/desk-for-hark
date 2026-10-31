@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
-    take_pwstr, DownloadStartingEventHandler, NavigationCompletedEventHandler,
+    take_pwstr, DownloadStartingEventHandler, NavigationCompletedEventHandler, StateChangedEventHandler,
     PermissionRequestedEventHandler, ProcessFailedEventHandler,
 };
 use windows::core::{Interface, HSTRING, PWSTR};
@@ -241,7 +241,7 @@ fn is_hark(uri: &str) -> bool {
 
 pub struct HookOptions {
     pub auto_grant_mic: bool,
-    pub ask_where_to_save: bool,
+    pub ask_before_saving: bool,
     pub offline_url: String,
 }
 
@@ -333,47 +333,101 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
         }));
         let _ = core.add_NavigationCompleted(&h, &mut token);
 
-        // Downloads: ask where to save with a normal Save dialog.
-        if opts.ask_where_to_save {
-            if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
-                let app_dl = app.clone();
-                let h = DownloadStartingEventHandler::create(Box::new(move |_sender, args| {
-                    let Some(args) = args else { return Ok(()) };
-                    let mut p = PWSTR::null();
-                    args.ResultFilePath(&mut p)?;
-                    let path = std::path::PathBuf::from(take_pwstr(p));
-                    let deferral = args.GetDeferral()?;
-                    let args_box = SendBox(args.clone());
-                    let def_box = SendBox(deferral);
-                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let mut dlg = app_dl.dialog().file().set_file_name(&name);
-                    if let Some(dir) = path.parent() {
-                        dlg = dlg.set_directory(dir);
-                    }
-                    let app_cb = app_dl.clone();
-                    dlg.save_file(move |chosen| {
-                        let chosen = chosen.and_then(|fp| fp.into_path().ok());
-                        let _ = app_cb.run_on_main_thread(move || {
-                            let args = args_box;
-                            let def = def_box;
-                            match chosen {
-                                Some(pb) => {
-                                    let hs = HSTRING::from(pb.to_string_lossy().as_ref());
-                                    let _ = args.0.SetResultFilePath(&hs);
-                                }
-                                None => {
-                                    let _ = args.0.SetCancel(true);
-                                }
+        // Downloads. By default one click is enough: the file goes straight
+        // to the Downloads folder, WebView2's own download bubble stays
+        // hidden, and a notification says when it's saved. With "Ask where
+        // to save" on, a normal Save dialog comes up instead.
+        if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
+            let app_dl = app.clone();
+            let ask = opts.ask_before_saving;
+            let h = DownloadStartingEventHandler::create(Box::new(move |_sender, args| {
+                let Some(args) = args else { return Ok(()) };
+                let _ = args.SetHandled(true);
+                let mut p = PWSTR::null();
+                args.ResultFilePath(&mut p)?;
+                let path = std::path::PathBuf::from(take_pwstr(p));
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+                if !ask {
+                    let dir = app_dl.path().download_dir().ok()
+                        .or_else(|| path.parent().map(|d| d.to_path_buf()))
+                        .unwrap_or_default();
+                    let target = unique_path(&dir, &name);
+                    let hs = HSTRING::from(target.to_string_lossy().as_ref());
+                    let _ = args.SetResultFilePath(&hs);
+                    let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
+                    if let Ok(op) = args.DownloadOperation() {
+                        let app_done = app_dl.clone();
+                        let done = std::cell::Cell::new(false);
+                        let sh = StateChangedEventHandler::create(Box::new(move |op, _| {
+                            let Some(op) = op else { return Ok(()) };
+                            let mut st = COREWEBVIEW2_DOWNLOAD_STATE::default();
+                            op.State(&mut st)?;
+                            if done.get() { return Ok(()) }
+                            if st == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
+                                done.set(true);
+                                crate::notify_text(&app_done, "Saved to Downloads", &shown);
+                            } else if st == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED {
+                                done.set(true);
+                                crate::notify_text(&app_done, "Download failed", &shown);
                             }
-                            let _ = def.0.Complete();
-                        });
+                            Ok(())
+                        }));
+                        let mut t: i64 = 0;
+                        let _ = op.add_StateChanged(&sh, &mut t);
+                    }
+                    return Ok(());
+                }
+
+                let deferral = args.GetDeferral()?;
+                let args_box = SendBox(args.clone());
+                let def_box = SendBox(deferral);
+                let mut dlg = app_dl.dialog().file().set_file_name(&name);
+                if let Some(dir) = path.parent() {
+                    dlg = dlg.set_directory(dir);
+                }
+                let app_cb = app_dl.clone();
+                dlg.save_file(move |chosen| {
+                    let chosen = chosen.and_then(|fp| fp.into_path().ok());
+                    let _ = app_cb.run_on_main_thread(move || {
+                        let args = args_box;
+                        let def = def_box;
+                        match chosen {
+                            Some(pb) => {
+                                let hs = HSTRING::from(pb.to_string_lossy().as_ref());
+                                let _ = args.0.SetResultFilePath(&hs);
+                            }
+                            None => {
+                                let _ = args.0.SetCancel(true);
+                            }
+                        }
+                        let _ = def.0.Complete();
                     });
-                    Ok(())
-                }));
-                let _ = core4.add_DownloadStarting(&h, &mut token);
-            }
+                });
+                Ok(())
+            }));
+            let _ = core4.add_DownloadStarting(&h, &mut token);
         }
     });
+}
+
+/// "report.pdf" -> "report (1).pdf" when a file with that name already exists.
+fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let name = if name.is_empty() { "download" } else { name };
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let p = std::path::Path::new(name);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| name.to_string());
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    for i in 1..1000 {
+        let c = dir.join(format!("{stem} ({i}){ext}"));
+        if !c.exists() {
+            return c;
+        }
+    }
+    first
 }
 
 fn urlencode(s: &str) -> String {

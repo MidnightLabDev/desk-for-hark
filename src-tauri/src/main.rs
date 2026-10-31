@@ -117,8 +117,10 @@ struct Settings {
     mica: bool,
     /// Allow the microphone for app.hark.com without asking.
     auto_grant_mic: bool,
-    /// Show a Save dialog for downloads.
-    ask_where_to_save: bool,
+    /// Show a Save dialog for downloads. Off by default: files go straight
+    /// to Downloads in one click. (Renamed from askWhereToSave in 1.3.0 so
+    /// older installs get the new one-click default.)
+    ask_before_saving: bool,
     /// Put your clipboard back after "Send selection".
     restore_clipboard: bool,
     /// Animated effect for event and mood themes (snow, fireworks…).
@@ -152,7 +154,7 @@ impl Default for Settings {
             tray_icon: "auto".into(),
             mica: false,
             auto_grant_mic: true,
-            ask_where_to_save: true,
+            ask_before_saving: false,
             restore_clipboard: true,
             snow: true,
         }
@@ -1259,7 +1261,7 @@ fn main() {
                     &window,
                     win::HookOptions {
                         auto_grant_mic: s.auto_grant_mic,
-                        ask_where_to_save: s.ask_where_to_save,
+                        ask_before_saving: s.ask_before_saving,
                         offline_url: format!("{LOCAL_ORIGIN}/offline.html"),
                     },
                 );
@@ -1317,7 +1319,6 @@ fn main() {
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
             let print = MenuItem::with_id(app, "print", "Print or save as PDF…", true, None::<&str>)?;
-            let groups = MenuItem::with_id(app, "groups", "Project groups…\tCtrl+Shift+G", true, None::<&str>)?;
 
             let zoom_in = MenuItem::with_id(app, "zoom_in", "Zoom in", true, None::<&str>)?;
             let zoom_out = MenuItem::with_id(app, "zoom_out", "Zoom out", true, None::<&str>)?;
@@ -1365,7 +1366,6 @@ fn main() {
                     &shot,
                     &reload,
                     &print,
-                    &groups,
                     &PredefinedMenuItem::separator(app)?,
                     &theme_menu,
                     &view_menu,
@@ -1412,10 +1412,6 @@ fn main() {
                         "print" => {
                             show_main(app);
                             eval_main(app, "window.print()");
-                        }
-                        "groups" => {
-                            show_main(app);
-                            eval_main(app, "window.__deskGroups&&window.__deskGroups.toggle(true)");
                         }
                         "zoom_in" => apply_zoom(app, "in"),
                         "zoom_out" => apply_zoom(app, "out"),

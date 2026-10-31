@@ -52,16 +52,10 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - Accent colour, font, text size and compact spacing.
 - `theme.css` for your own CSS, reloaded live when you save it.
 
-**Project groups**
-- Sort your Hark projects into groups you name and colour. Open with `Ctrl+Shift+G` or **Tray > Project groups…**.
-- Add the open project to a group, drag projects between groups, collapse groups, and click a project to open it.
-- Grouped projects get a coloured dot in Hark's sidebar.
-- Groups are saved on this PC only. They don't change Hark and don't sync to the web or your phone.
-
 **Reliability**
 - A clean offline screen that reconnects by itself.
 - Automatic recovery if the page crashes or freezes.
-- A normal **Save** dialog for downloads, and **Open Downloads folder** in the tray.
+- **One-click downloads**: files you save from Hark go straight to your Downloads folder, with a notification when they're done. Prefer to choose the place each time? Turn on **Settings > Ask where to save downloads**. **Open Downloads folder** is in the tray.
 - Drag files from Explorer straight onto the window to attach them.
 - `Ctrl+P` to print or save a chat as PDF.
 - `Ctrl+R`/`F5` reload, `Ctrl` `+`/`-`/`0` and `Ctrl`+wheel zoom.

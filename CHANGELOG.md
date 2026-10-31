@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+**Improved**
+- **One-click downloads**: saving a file from Hark now puts it straight in your Downloads folder, with no extra dialog or download bubble. A notification tells you when it's saved. If a file with that name exists, the new one gets a number, like "report (1).pdf". You can still turn on **Ask where to save downloads** in Settings.
+
+**Removed**
+- **Project groups**, along with its tray item and `Ctrl+Shift+G`. Groups saved by 1.1.0 or 1.2.0 are cleared from this PC.
+
 ## 1.2.0
 
 **New**

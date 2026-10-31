@@ -85,7 +85,7 @@ a{color:var(--accent)}
 <h2>Files and privacy</h2>
 <section>
   <div class="row"><label>Add to Explorer's "Send to" menu<small>Right-click a file, Send to, Desk for Hark</small></label><input type="checkbox" id="sendTo"></div>
-  <div class="row"><label>Ask where to save downloads</label><input type="checkbox" id="askWhereToSave"></div>
+  <div class="row"><label>Ask where to save downloads<small>Off: files save straight to Downloads in one click</small></label><input type="checkbox" id="askBeforeSaving"></div>
   <div class="row"><label>Allow microphone for app.hark.com<small>No prompt when you use voice</small></label><input type="checkbox" id="autoGrantMic"></div>
   <div class="row"><label>Restore clipboard after Send selection</label><input type="checkbox" id="restoreClipboard"></div>
 </section>
@@ -98,7 +98,7 @@ a{color:var(--accent)}
 <script>
 const invoke = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a || {});
 const $ = id => document.getElementById(id);
-const BOOL = ["compact","customCss","mica","autostart","startHidden","alwaysOnTop","sendTo","askWhereToSave","autoGrantMic","restoreClipboard","snow"];
+const BOOL = ["compact","customCss","mica","autostart","startHidden","alwaysOnTop","sendTo","askBeforeSaving","autoGrantMic","restoreClipboard","snow"];
 const TEXT = ["theme","fontFamily","trayIcon","hotkey","fallbackHotkey","quickAskHotkey","screenshotHotkey","selectionHotkey","voiceHotkey","voiceButtonSelector","scheduleDark","scheduleLight"];
 const NUM = ["fontScale","zoom"];
 const HOTKEYS = ["hotkey","fallbackHotkey","quickAskHotkey","screenshotHotkey","selectionHotkey","voiceHotkey"];

@@ -10,7 +10,6 @@ This program will not transfer any information to other networked systems unless
 
 - Your Hark sign-in and site data, in the app's WebView2 profile: `%LOCALAPPDATA%\dev.midnightlab.deskforhark\webview` (the same way a browser keeps cookies).
 - Your settings (`settings.json`) and optional custom CSS (`theme.css`): `%APPDATA%\dev.midnightlab.deskforhark`.
-- Project groups (names, colours and which projects are in them): stored in the app window's local storage for app.hark.com on this PC. They are never sent to Hark or anyone else.
 - Window size and position.
 
 ## When the app touches your clipboard or files
