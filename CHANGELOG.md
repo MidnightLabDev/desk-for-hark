@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2
+
+**Removed**
+- **Print or save as PDF**: the tray item is gone and `Ctrl+P` no longer opens the print dialog.
+
 ## 1.3.1
 
 **Changed**

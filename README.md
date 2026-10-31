@@ -59,7 +59,6 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - Automatic recovery if the page crashes or freezes.
 - **One-click downloads**: files you save from Hark go straight to your Downloads folder, with a notification when they're done. Prefer to choose the place each time? Turn on **Settings > Ask where to save downloads**. **Open Downloads folder** is in the tray.
 - Drag files from Explorer straight onto the window to attach them.
-- `Ctrl+P` to print or save a chat as PDF.
 - `Ctrl+R`/`F5` reload, `Ctrl` `+`/`-`/`0` and `Ctrl`+wheel zoom.
 
 Everything is configurable from **Tray > Settings…**.

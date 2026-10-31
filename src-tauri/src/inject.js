@@ -1,7 +1,7 @@
 // Injected by Desk for Hark into every page of the main window.
 // Native commands only work on https://app.hark.com (see capabilities/).
 // - Web notifications -> native Windows toasts, unread badge.
-// - Keyboard: Ctrl+R/F5 reload, Ctrl +/-/0 and Ctrl+wheel zoom, Ctrl+P print.
+// - Keyboard: Ctrl+R/F5 reload, Ctrl +/-/0 and Ctrl+wheel zoom, Ctrl+P blocked.
 // - Themes (CSS on top of Hark's design tokens).
 // - Helpers the app calls: insert text, attach files, voice button.
 // - Offline banner.
@@ -82,7 +82,7 @@
     } catch (e) {}
   }
 
-  // ---- Keyboard: reload, zoom, print ----------------------------------
+  // ---- Keyboard: reload, zoom ----------------------------------
   window.addEventListener("keydown", function (e) {
     var ctrl = e.ctrlKey || e.metaKey;
     var k = e.key;
@@ -91,7 +91,7 @@
     }
     if (!ctrl || e.altKey) return;
     if (k === "p" || k === "P") {
-      e.preventDefault(); window.print();
+      e.preventDefault(); return; // printing is turned off in the app
     } else if (k === "=" || k === "+" || e.code === "NumpadAdd") {
       e.preventDefault(); quiet(invoke("zoom", { action: "in" }));
     } else if (k === "-" || k === "_" || e.code === "NumpadSubtract") {

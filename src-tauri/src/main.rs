@@ -988,11 +988,6 @@ fn title_bar(app: AppHandle, caption: String, text: String, dark: bool) {
 }
 
 #[tauri::command]
-fn print_page(app: AppHandle) {
-    eval_main(&app, "window.print()");
-}
-
-#[tauri::command]
 fn quick_submit(app: AppHandle, webview: Webview, text: String) {
     if !is_local(&webview) {
         return;
@@ -1176,7 +1171,6 @@ fn main() {
             open_external,
             get_theme,
             title_bar,
-            print_page,
             quick_submit,
             quick_hide,
             get_settings,
@@ -1319,7 +1313,6 @@ fn main() {
             let quick = MenuItem::with_id(app, "quick", "Quick Ask…", true, None::<&str>)?;
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
-            let print = MenuItem::with_id(app, "print", "Print or save as PDF…", true, None::<&str>)?;
 
             let zoom_in = MenuItem::with_id(app, "zoom_in", "Zoom in", true, None::<&str>)?;
             let zoom_out = MenuItem::with_id(app, "zoom_out", "Zoom out", true, None::<&str>)?;
@@ -1366,7 +1359,6 @@ fn main() {
                     &quick,
                     &shot,
                     &reload,
-                    &print,
                     &PredefinedMenuItem::separator(app)?,
                     &theme_menu,
                     &view_menu,
@@ -1410,10 +1402,6 @@ fn main() {
                         "quick" => show_quick(app),
                         "screenshot" => screenshot_to_hark(app),
                         "reload" => reload_main(app),
-                        "print" => {
-                            show_main(app);
-                            eval_main(app, "window.print()");
-                        }
                         "zoom_in" => apply_zoom(app, "in"),
                         "zoom_out" => apply_zoom(app, "out"),
                         "zoom_reset" => apply_zoom(app, "reset"),
