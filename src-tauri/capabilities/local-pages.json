@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local-pages",
+  "description": "The app's own bundled pages (Quick Ask, Settings, Offline). Settings and Quick Ask commands also check that they are called from these pages.",
+  "windows": ["main", "quick", "settings"],
+  "permissions": ["core:app:allow-version"]
+}

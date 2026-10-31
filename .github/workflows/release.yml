@@ -1,0 +1,63 @@
+name: Build Windows installers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend deps (Tauri CLI)
+        run: npm ci
+
+      # Turns on updater artifacts and code signing only when their
+      # secrets/variables exist, so the build never breaks without them.
+      - name: Optional release config (updater + code signing)
+        shell: pwsh
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          SIGN_COMMAND: ${{ vars.WINDOWS_SIGN_COMMAND }}
+        run: |
+          $cfg = @{ bundle = @{ windows = @{} } }
+          if ($env:HAS_UPDATER_KEY -eq 'true') { $cfg.bundle.createUpdaterArtifacts = $true; "Updater artifacts: on" } else { "Updater artifacts: off (no TAURI_SIGNING_PRIVATE_KEY)" }
+          if ($env:SIGN_COMMAND) { $cfg.bundle.windows.signCommand = $env:SIGN_COMMAND; "Code signing: on" } else { "Code signing: off (no WINDOWS_SIGN_COMMAND)" }
+          $cfg | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM src-tauri/tauri.ci.conf.json
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SIGN_SECRET_1: ${{ secrets.SIGN_SECRET_1 }}
+          SIGN_SECRET_2: ${{ secrets.SIGN_SECRET_2 }}
+          SIGN_SECRET_3: ${{ secrets.SIGN_SECRET_3 }}
+        with:
+          args: --config src-tauri/tauri.ci.conf.json
+          tagName: v__VERSION__
+          releaseName: 'Desk for Hark v__VERSION__'
+          releaseBody: |
+            Desk for Hark, an unofficial Windows desktop app for Hark. Not affiliated with Hark.
+            Download the -setup.exe (recommended) or the .msi below. Installed copies update themselves.
+            If SmartScreen appears, click "More info", then "Run anyway".
+            See the README for features and PRIVACY.md for what the app does and doesn't do.
+          releaseDraft: false
+          prerelease: false
+

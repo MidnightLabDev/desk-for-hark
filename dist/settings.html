@@ -1,0 +1,168 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Desk for Hark settings</title>
+<style>
+:root{--bg:#141414;--card:#1e1f24;--line:rgba(255,255,255,.08);--text:#f5f5f7;--muted:#8a8f9c;--accent:#19b3a6}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px "Segoe UI Variable","Segoe UI",sans-serif}
+main{max-width:620px;margin:0 auto;padding:24px 22px 96px}
+h1{font-size:22px;font-weight:600;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px;font-size:13px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px 16px;margin:0 0 16px}
+h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:22px 4px 8px;font-weight:600}
+.row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row label{flex:1}
+.row small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+input[type=text],input[type=number],input[type=time],select{background:#141414;color:var(--text);border:1px solid rgba(255,255,255,.14);
+  border-radius:8px;padding:7px 10px;font:inherit;width:220px}
+input[type=color]{width:44px;height:32px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#141414;padding:2px}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+.hk{cursor:pointer;text-align:center}
+.hk.rec{border-color:var(--accent);color:var(--accent)}
+.inline{display:flex;gap:8px;align-items:center}
+button{font:inherit;border-radius:999px;padding:9px 18px;border:1px solid rgba(255,255,255,.16);background:transparent;color:var(--text);cursor:pointer}
+button.primary{background:var(--text);color:#141414;border-color:var(--text);font-weight:600}
+.bar{position:fixed;left:0;right:0;bottom:0;background:rgba(20,20,20,.94);border-top:1px solid var(--line);padding:12px 22px;
+  display:flex;gap:10px;justify-content:flex-end;backdrop-filter:blur(8px)}
+.note{color:var(--muted);font-size:12px;margin-right:auto;align-self:center}
+a{color:var(--accent)}
+</style></head>
+<body><main>
+<h1>Settings</h1>
+<p class="sub">Desk for Hark <span id="version"></span> · unofficial, not affiliated with Hark</p>
+
+<h2>Look</h2>
+<section>
+  <div class="row"><label>Theme</label>
+    <select id="theme">
+      <option value="hark">Hark (default)</option><option value="midnight">Midnight (OLED)</option>
+      <option value="teal">Teal</option><option value="paper">Paper (light)</option>
+      <option value="contrast">High contrast</option><option value="windows">Follow Windows</option>
+      <option value="schedule">Scheduled (dark at night)</option>
+    </select></div>
+  <div class="row" id="schedRow"><label>Dark from / light from<small>For the Scheduled theme</small></label>
+    <div class="inline"><input type="time" id="scheduleDark" style="width:110px"><input type="time" id="scheduleLight" style="width:110px"></div></div>
+  <div class="row"><label>Accent colour<small>Links, highlights and selection</small></label>
+    <div class="inline"><input type="checkbox" id="accentOn"><input type="color" id="accent" value="#19b3a6"></div></div>
+  <div class="row"><label>Font<small>Leave empty to keep Hark's fonts</small></label>
+    <input type="text" id="fontFamily" list="fonts" placeholder="e.g. Segoe UI Variable">
+    <datalist id="fonts"><option>Segoe UI Variable</option><option>Segoe UI</option><option>Inter</option><option>Calibri</option><option>Georgia</option><option>Cascadia Code</option></datalist></div>
+  <div class="row"><label>Text size<small>Separate from zoom</small></label>
+    <select id="fontScale"><option value="0.9">90%</option><option value="1">100%</option><option value="1.1">110%</option><option value="1.2">120%</option><option value="1.35">135%</option></select></div>
+  <div class="row"><label>Compact spacing</label><input type="checkbox" id="compact"></div>
+  <div class="row"><label>Custom CSS<small>theme.css, reloads when you save it</small></label>
+    <div class="inline"><input type="checkbox" id="customCss"><button id="editCss" type="button">Edit…</button></div></div>
+  <div class="row"><label>Mica title bar<small>Windows 11 see-through title bar instead of the theme colour</small></label><input type="checkbox" id="mica"></div>
+  <div class="row"><label>Tray icon</label>
+    <select id="trayIcon"><option value="auto">Match taskbar</option><option value="color">Colour</option><option value="light">White</option><option value="dark">Black</option></select></div>
+</section>
+
+<h2>Hotkeys <small style="text-transform:none;letter-spacing:0">(click a box, then press the keys)</small></h2>
+<section>
+  <div class="row"><label>Show / hide</label><input type="text" class="hk" id="hotkey" readonly></div>
+  <div class="row"><label>Show / hide (fallback)</label><input type="text" class="hk" id="fallbackHotkey" readonly></div>
+  <div class="row"><label>Quick Ask</label><input type="text" class="hk" id="quickAskHotkey" readonly></div>
+  <div class="row"><label>Screenshot to Hark</label><input type="text" class="hk" id="screenshotHotkey" readonly></div>
+  <div class="row"><label>Send selection<small>Copies selected text from any app into Hark</small></label><input type="text" class="hk" id="selectionHotkey" readonly></div>
+  <div class="row"><label>Voice<small>Presses Hark's voice button</small></label><input type="text" class="hk" id="voiceHotkey" readonly></div>
+  <div class="row"><label>Voice button selector<small>Advanced: CSS selector if auto-detect misses it</small></label><input type="text" id="voiceButtonSelector" placeholder="auto"></div>
+</section>
+
+<h2>Window and startup</h2>
+<section>
+  <div class="row"><label>Start at login</label><input type="checkbox" id="autostart"></div>
+  <div class="row"><label>Always start hidden in the tray</label><input type="checkbox" id="startHidden"></div>
+  <div class="row"><label>Always on top</label><input type="checkbox" id="alwaysOnTop"></div>
+  <div class="row"><label>Zoom</label>
+    <select id="zoom"><option value="0.8">80%</option><option value="0.9">90%</option><option value="1">100%</option><option value="1.1">110%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></div>
+</section>
+
+<h2>Files and privacy</h2>
+<section>
+  <div class="row"><label>Add to Explorer's "Send to" menu<small>Right-click a file, Send to, Desk for Hark</small></label><input type="checkbox" id="sendTo"></div>
+  <div class="row"><label>Ask where to save downloads</label><input type="checkbox" id="askWhereToSave"></div>
+  <div class="row"><label>Allow microphone for app.hark.com<small>No prompt when you use voice</small></label><input type="checkbox" id="autoGrantMic"></div>
+  <div class="row"><label>Restore clipboard after Send selection</label><input type="checkbox" id="restoreClipboard"></div>
+</section>
+<p class="sub">The app collects no data of its own. <a href="#" id="src">Source code</a></p>
+</main>
+<div class="bar"><span class="note" id="note"></span>
+  <button id="cancel" type="button">Close</button>
+  <button id="save" type="button">Save</button>
+  <button id="saveRestart" class="primary" type="button">Save and restart</button></div>
+<script>
+const invoke = (c, a) => window.__TAURI_INTERNALS__.invoke(c, a || {});
+const $ = id => document.getElementById(id);
+const BOOL = ["compact","customCss","mica","autostart","startHidden","alwaysOnTop","sendTo","askWhereToSave","autoGrantMic","restoreClipboard"];
+const TEXT = ["theme","fontFamily","trayIcon","hotkey","fallbackHotkey","quickAskHotkey","screenshotHotkey","selectionHotkey","voiceHotkey","voiceButtonSelector","scheduleDark","scheduleLight"];
+const NUM = ["fontScale","zoom"];
+const HOTKEYS = ["hotkey","fallbackHotkey","quickAskHotkey","screenshotHotkey","selectionHotkey","voiceHotkey"];
+let current = {};
+
+function nearest(sel, v) {
+  const opts = [...$(sel).options].map(o => +o.value);
+  return String(opts.reduce((a, b) => Math.abs(b - v) < Math.abs(a - v) ? b : a));
+}
+function fill(s) {
+  current = s;
+  $("version").textContent = s.version || "";
+  BOOL.forEach(k => $(k).checked = !!s[k]);
+  TEXT.forEach(k => $(k).value = s[k] || "");
+  NUM.forEach(k => $(k).value = nearest(k, +s[k] || 1));
+  $("accentOn").checked = !!s.accent;
+  if (s.accent) $("accent").value = s.accent;
+  $("schedRow").style.display = s.theme === "schedule" ? "" : "none";
+}
+function collect() {
+  const s = Object.assign({}, current);
+  delete s.version;
+  BOOL.forEach(k => s[k] = $(k).checked);
+  TEXT.forEach(k => s[k] = $(k).value.trim());
+  NUM.forEach(k => s[k] = +$(k).value);
+  s.accent = $("accentOn").checked ? $("accent").value : "";
+  return s;
+}
+function hotkeysChanged(s) { return HOTKEYS.some(k => s[k] !== current[k]); }
+async function save(restart) {
+  const s = collect();
+  const needRestart = hotkeysChanged(s);
+  const ok = await invoke("save_settings", { settings: s, restart: !!restart });
+  if (ok) {
+    current = Object.assign(current, s);
+    $("note").textContent = needRestart && !restart ? "Saved. Restart to use the new hotkeys." : "Saved.";
+  } else {
+    $("note").textContent = "Couldn't save those settings.";
+  }
+}
+$("theme").addEventListener("change", () => $("schedRow").style.display = $("theme").value === "schedule" ? "" : "none");
+$("save").onclick = () => save(false);
+$("saveRestart").onclick = () => save(true);
+$("cancel").onclick = () => window.close();
+$("editCss").onclick = () => invoke("open_theme_css");
+$("src").onclick = e => { e.preventDefault(); invoke("open_external", { url: "https://github.com/MidnightLabDev/desk-for-hark" }); };
+
+// Hotkey recorder: click a box, press a combination, Esc clears.
+HOTKEYS.forEach(id => {
+  const el = $(id);
+  el.addEventListener("focus", () => { el.classList.add("rec"); el.dataset.prev = el.value; el.value = "Press keys…"; });
+  el.addEventListener("blur", () => { el.classList.remove("rec"); if (el.value === "Press keys…") el.value = el.dataset.prev || ""; });
+  el.addEventListener("keydown", e => {
+    e.preventDefault();
+    if (e.key === "Escape") { el.value = ""; el.blur(); return; }
+    if (["Control","Shift","Alt","Meta"].includes(e.key)) return;
+    const parts = [];
+    if (e.ctrlKey) parts.push("Ctrl");
+    if (e.altKey) parts.push("Alt");
+    if (e.shiftKey) parts.push("Shift");
+    if (e.metaKey) parts.push("Super");
+    let k = e.code;
+    if (/^Key[A-Z]$/.test(k)) k = k.slice(3);
+    else if (/^Digit\d$/.test(k)) k = k.slice(5);
+    if (!parts.length) { $("note").textContent = "Use at least one of Ctrl, Alt, Shift or Win."; return; }
+    el.value = parts.concat(k).join("+");
+    el.blur();
+  });
+});
+
+invoke("get_settings").then(s => { if (s) fill(s); });
+</script></body></html>

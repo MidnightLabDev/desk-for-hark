@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-hark",
+  "description": "Only https://app.hark.com may call the app's own commands (notify, zoom, open_external). No core APIs beyond reading the app version.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://app.hark.com/*"
+    ]
+  },
+  "permissions": [
+    "core:app:allow-version"
+  ]
+}

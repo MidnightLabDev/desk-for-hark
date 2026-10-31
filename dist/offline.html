@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Offline · Desk for Hark</title>
+<style>
+html,body{margin:0;height:100%;background:#141414;color:#f5f5f7;font:15px "Segoe UI Variable","Segoe UI",sans-serif}
+body{display:flex;align-items:center;justify-content:center;text-align:center}
+.card{max-width:420px;padding:32px}
+h1{font-size:22px;font-weight:600;margin:18px 0 8px}
+p{color:#a3a8b4;line-height:1.5;margin:0 0 22px}
+.arcs{width:64px;height:64px;margin:0 auto;opacity:.9}
+button{background:#f5f5f7;color:#141414;border:0;border-radius:999px;padding:10px 22px;font:600 14px inherit;cursor:pointer}
+small{display:block;margin-top:16px;color:#7b8499}
+</style></head>
+<body><div class="card">
+<svg class="arcs" viewBox="0 0 64 64" fill="none" stroke="#19b3a6" stroke-width="5" stroke-linecap="round">
+<circle cx="20" cy="32" r="5" fill="#19b3a6" stroke="none"/><path d="M30 22a14 14 0 0 1 0 20"/><path d="M37 15a24 24 0 0 1 0 34"/><path d="M44 8a34 34 0 0 1 0 48"/></svg>
+<h1>You're offline</h1>
+<p>Desk for Hark can't reach Hark right now. It'll reconnect on its own as soon as your connection is back.</p>
+<button id="retry">Try again</button>
+<small id="status">Checking every 5 seconds…</small>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+let target = params.get("return") || "https://app.hark.com";
+if (!/^https:\/\/([a-z0-9-]+\.)*hark\.com(\/|$)/i.test(target)) target = "https://app.hark.com";
+const status = document.getElementById("status");
+function check() {
+  status.textContent = "Checking…";
+  fetch("https://app.hark.com/favicon.png?" + Date.now(), { mode: "no-cors", cache: "no-store" })
+    .then(() => location.replace(target))
+    .catch(() => { status.textContent = "Still offline. Checking every 5 seconds…"; });
+}
+document.getElementById("retry").onclick = check;
+window.addEventListener("online", check);
+setInterval(check, 5000);
+</script></body></html>

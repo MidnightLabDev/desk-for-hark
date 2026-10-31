@@ -1,0 +1,91 @@
+<p align="center"><img src="assets/icon-source.png" width="96" alt="Desk for Hark icon"></p>
+
+<h1 align="center">Desk for Hark</h1>
+
+<p align="center">An unofficial Windows desktop app for <a href="https://hark.com">Hark</a>, with hotkeys, screenshots, themes and a proper tray icon.</p>
+
+> **Unofficial.** Desk for Hark is an independent open-source project. It is not affiliated with, endorsed by, or supported by Hark. "Hark" is a trademark of its owner. The app simply loads https://app.hark.com in its own window.
+
+## Download
+
+Grab the latest installer from [Releases](https://github.com/MidnightLabDev/desk-for-hark/releases/latest):
+
+- **`Desk.for.Hark_x.y.z_x64-setup.exe`** (recommended)
+- `Desk.for.Hark_x.y.z_x64_en-US.msi` (for managed installs)
+
+Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk for Hark` and updates itself.
+
+> The installers aren't code-signed yet, so Windows SmartScreen may warn you. Click **More info**, then **Run anyway**.
+
+## Features
+
+**Faster ways in**
+- **Show/hide hotkey**: `Alt+Space` (fallback `Ctrl+Shift+Space`).
+- **Quick Ask**: `Alt+Shift+Space` opens a small floating box. Type, press Enter, and it goes straight to Hark.
+- **Screenshot to Hark**: `Alt+Shift+S` lets you snip any part of the screen and attaches it to your message.
+- **Send selection**: select text in any app, press `Alt+Shift+C`, and it lands in Hark's message box. Your clipboard is put back afterwards.
+- **Voice**: `Alt+Shift+V` presses Hark's voice button, and the microphone is allowed for app.hark.com so there's no prompt.
+- **Send to**: right-click any file in Explorer, then **Send to > Desk for Hark** to attach it (turn this on from the tray or Settings).
+- **Jump list**: right-click the taskbar icon for Quick Ask, Screenshot, Open Hark and Settings.
+
+**Feels native**
+- Tray icon (white, black or colour, matching your taskbar) with an **unread dot** when Hark replies while the app is hidden, plus a taskbar badge.
+- **Always on top** and **Compact mode** (a slim window pinned to the right edge of the screen).
+- Native Windows notifications.
+- Starts hidden in the tray when launched at login.
+- Themed or **Mica** title bar, and Windows snap layouts.
+- Single instance, remembers its size and position, closes to the tray.
+
+**Themes**
+- **Hark** (default), **Midnight** (true black), **Teal**, **Paper** (light), **High contrast**, **Follow Windows** (light/dark and your accent colour) and **Scheduled** (dark at night, light by day, at times you choose).
+- Accent colour, font, text size and compact spacing.
+- `theme.css` for your own CSS, reloaded live when you save it.
+
+**Reliability**
+- A clean offline screen that reconnects by itself.
+- Automatic recovery if the page crashes or freezes.
+- A normal **Save** dialog for downloads, and **Open Downloads folder** in the tray.
+- `Ctrl+P` to print or save a chat as PDF.
+- `Ctrl+R`/`F5` reload, `Ctrl` `+`/`-`/`0` and `Ctrl`+wheel zoom.
+
+Everything is configurable from **Tray > Settings…**.
+
+> Quick Ask, Send selection, screenshots, Send to and the voice hotkey work by typing into, pasting into or clicking Hark's page. If Hark changes its layout, some of them may need an update.
+
+## Privacy
+
+The app collects nothing itself. See [PRIVACY.md](PRIVACY.md).
+
+## Security
+
+- Only `https://app.hark.com` and the app's own bundled pages can call the app's native functions. Google and Apple sign-in pages load inside the window but get no native access.
+- Settings and Quick Ask commands only work from the app's own pages.
+- Every other link opens in your default browser.
+- Updates are verified against the updater public key in `tauri.conf.json` before installing.
+
+## Build from source
+
+Requirements: Windows, [Rust](https://rustup.rs), Node.js LTS, and the WebView2 runtime (built into Windows 11).
+
+```powershell
+npm ci
+npx tauri dev      # run
+npx tauri build    # installers in src-tauri\target\release\bundle
+```
+
+Icons are generated from `assets/`: `python assets/make_icon.py`, `python assets/make_tray_icons.py`, `python assets/make_installer_art.py`, then `npx tauri icon assets/icon-source.png`.
+
+## Releases (maintainers)
+
+Every push to `main` builds the installers on GitHub Actions and publishes a release tagged `v<version>` (bump `version` in `src-tauri/tauri.conf.json`).
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | secret | Updater signing key. Without it the build still works but ships no update files. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | secret | Only if the key has a password. |
+| `WINDOWS_SIGN_COMMAND` | variable | Optional Authenticode sign command, `%1` = file to sign. |
+| `SIGN_SECRET_1..3` | secrets | Optional credentials the sign command needs, exposed as env vars. |
+
+## Licence
+
+[MIT](LICENSE). The licence covers this code only and grants no rights to Hark's name, logo or service.
