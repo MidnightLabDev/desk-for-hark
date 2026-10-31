@@ -45,6 +45,7 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - A clean offline screen that reconnects by itself.
 - Automatic recovery if the page crashes or freezes.
 - A normal **Save** dialog for downloads, and **Open Downloads folder** in the tray.
+- Drag files from Explorer straight onto the window to attach them.
 - `Ctrl+P` to print or save a chat as PDF.
 - `Ctrl+R`/`F5` reload, `Ctrl` `+`/`-`/`0` and `Ctrl`+wheel zoom.
 

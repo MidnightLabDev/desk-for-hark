@@ -1208,6 +1208,8 @@ fn main() {
                 .theme(initial_theme)
                 .always_on_top(s.always_on_top)
                 .data_directory(data_dir)
+                // Let file drops reach Hark's page (Tauri would otherwise swallow them).
+                .disable_drag_drop_handler()
                 .initialization_script(INJECT_JS)
                 .on_navigation(move |url| {
                     if is_internal(&nav_handle, url) {
