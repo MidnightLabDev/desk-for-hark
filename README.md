@@ -37,7 +37,18 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - Single instance, remembers its size and position, closes to the tray.
 
 **Themes**
-- **Hark** (default), **Midnight** (true black), **Teal**, **Paper** (warm light, built on Hark's own light mode), **Christmas** (pine green, cranberry and gold, with optional snowfall that never blocks clicks), **High contrast**, **Follow Windows** (light/dark and your accent colour) and **Scheduled** (dark at night, light by day, at times you choose).
+- **Everyday**: **Hark** (default), **Midnight** (true black), **Teal** and **High contrast**.
+- **Global events**, each with its own animated effect:
+  - **Christmas**: pine green, cranberry and gold, with snow.
+  - **New Year**: black and champagne gold, with fireworks.
+  - **Halloween**: charcoal and pumpkin orange, with bats.
+  - **Valentine's Day**: wine and blush pink, with floating hearts.
+  - **Lunar New Year**: red and gold, with lanterns.
+  - **St Patrick's Day**: emerald and gold, with falling clovers.
+  - **Earth Day**: forest and sky blue, with drifting leaves.
+- **Moods**: **Aurora** (night sky with moving green and violet light) and **Ocean** (navy and aqua, with bubbles).
+- Effects sit on top of the page, never block clicks, and can be turned off in **Settings > Theme effects**. They switch off when Windows is set to reduce motion. Only colours change; Hark's layout stays the same.
+- **Follow Windows** (Hark's light or dark mode plus your accent colour) and **Scheduled** (dark at night, Hark's light mode by day, at times you choose).
 - Accent colour, font, text size and compact spacing.
 - `theme.css` for your own CSS, reloaded live when you save it.
 

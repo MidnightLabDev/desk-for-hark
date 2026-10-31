@@ -36,11 +36,15 @@ a{color:var(--accent)}
   <div class="row"><label>Theme</label>
     <select id="theme">
       <option value="hark">Hark (default)</option><option value="midnight">Midnight (OLED)</option>
-      <option value="teal">Teal</option><option value="paper">Paper (light)</option><option value="christmas">Christmas</option>
+      <option value="teal">Teal</option>
+      <optgroup label="Global events"><option value="christmas">Christmas</option><option value="newyear">New Year</option>
+      <option value="halloween">Halloween</option><option value="valentine">Valentine's Day</option><option value="lunar">Lunar New Year</option>
+      <option value="stpatricks">St Patrick's Day</option><option value="earthday">Earth Day</option></optgroup>
+      <optgroup label="Moods"><option value="aurora">Aurora</option><option value="ocean">Ocean</option></optgroup>
       <option value="contrast">High contrast</option><option value="windows">Follow Windows</option>
       <option value="schedule">Scheduled (dark at night)</option>
     </select></div>
-  <div class="row" id="snowRow"><label>Snowfall<small>For the Christmas theme; it never blocks clicks</small></label><input type="checkbox" id="snow"></div>
+  <div class="row" id="snowRow"><label>Theme effects<small>Snow, fireworks, bats and so on. They never block clicks</small></label><input type="checkbox" id="snow"></div>
   <div class="row" id="schedRow"><label>Dark from / light from<small>For the Scheduled theme</small></label>
     <div class="inline"><input type="time" id="scheduleDark" style="width:110px"><input type="time" id="scheduleLight" style="width:110px"></div></div>
   <div class="row"><label>Accent colour<small>Links, highlights and selection</small></label>
@@ -116,7 +120,7 @@ function fill(s) {
 }
 function themeRows() {
   $("schedRow").style.display = $("theme").value === "schedule" ? "" : "none";
-  $("snowRow").style.display = $("theme").value === "christmas" ? "" : "none";
+  $("snowRow").style.display = ["christmas","newyear","halloween","valentine","lunar","stpatricks","earthday","aurora","ocean"].includes($("theme").value) ? "" : "none";
 }
 function collect() {
   const s = Object.assign({}, current);

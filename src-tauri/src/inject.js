@@ -159,20 +159,30 @@
       v["--color-border-color"] = rgba(o.ink, .45); v["--color-border-color-2"] = rgba(o.ink, .6);
     }
     return { dark: !o.light, light: !!o.light, caption: o.caption || o.bg, text: o.ink,
-             accent: o.accent, body: !o.light, vars: v, extra: o.extra || "", snow: !!o.snow };
+             accent: o.accent, body: !o.light, vars: v, extra: o.extra || "", effect: o.effect || "" };
   }
   var PALETTES = {
     midnight: palette({ bg: "#000000", surface: "#0c0c0e", panel: "#101013", ink: "#e8e8ea", sub: "#8a8f9c", accent: "#7aa2ff" }),
     teal: palette({ bg: "#0b1a24", surface: "#102632", panel: "#12303d", ink: "#eaf6f5", sub: "#8fb3b5", accent: "#19b3a6" }),
-    paper: palette({ light: true, bg: "#f4efe4", surface: "#ebe4d6", panel: "#fbf8f2", ink: "#2a2620", sub: "#5f594e",
-                     accent: "#b4562a", caption: "#ebe4d6" }),
+    // Global events
     christmas: palette({ bg: "#0e2419", surface: "#143222", panel: "#173a28", ink: "#f7f1e3", sub: "#b8c8b4",
-                         accent: "#d23a44", snow: true,
-                         extra: "a:not([class]){color:#e3bf5a !important}" }),
+                         accent: "#d23a44", effect: "snow", extra: "a:not([class]){color:#e3bf5a !important}" }),
+    newyear: palette({ bg: "#0b0b0d", surface: "#151418", panel: "#1a191e", ink: "#f4efe4", sub: "#a9a294", accent: "#d4b46a", effect: "fireworks" }),
+    halloween: palette({ bg: "#141214", surface: "#1e1a1d", panel: "#241f22", ink: "#f3ece6", sub: "#a99f98", accent: "#ff7a1a", effect: "bats" }),
+    valentine: palette({ bg: "#24101a", surface: "#301622", panel: "#381a28", ink: "#fbeef2", sub: "#d4a9b7", accent: "#ff6b9a", effect: "hearts" }),
+    lunar: palette({ bg: "#2a0c0c", surface: "#361212", panel: "#3e1515", ink: "#fbf1df", sub: "#d9b9a0", accent: "#f2c14e", effect: "lanterns" }),
+    stpatricks: palette({ bg: "#08281a", surface: "#0e3523", panel: "#113d29", ink: "#eef8ef", sub: "#a9c9b1", accent: "#3ddc84", effect: "clovers",
+                          extra: "a:not([class]){color:#e3bf5a !important}" }),
+    earthday: palette({ bg: "#0c1f24", surface: "#12302f", panel: "#153836", ink: "#ecf6f0", sub: "#9fc3b8", accent: "#5ccf7a", effect: "leaves" }),
+    // Moods
+    aurora: palette({ bg: "#070b1a", surface: "#0e1528", panel: "#121a31", ink: "#eaf0ff", sub: "#9aa6c8", accent: "#7ef0c2", effect: "aurora" }),
+    ocean: palette({ bg: "#061827", surface: "#0b2438", panel: "#0e2b42", ink: "#e8f6ff", sub: "#94b8cc", accent: "#2ec4e6", effect: "bubbles" }),
     contrast: palette({ bg: "#000000", surface: "#111111", panel: "#141414", ink: "#ffffff", sub: "#d6d6d6", accent: "#ffd400",
                         strong: true,
                         extra: "*:focus-visible{outline:2px solid #ffd400 !important;outline-offset:2px !important}" +
                                "a{text-decoration:underline !important}" }),
+    // Hark's own light mode, used by Follow Windows / Scheduled in the daytime.
+    light: { dark: false, light: true, caption: "#ffffff", text: "#1d1d1f", accent: "", vars: {}, extra: "" },
     hark: { dark: true, caption: "", text: "", accent: "", vars: {}, extra: "" }
   };
 
@@ -188,14 +198,14 @@
   }
   function resolvePalette(p) {
     var name = p.theme || "hark";
-    if (name === "windows") name = p.windowsLight ? "paper" : "hark";
-    if (name === "schedule") name = scheduledDark(p) ? "midnight" : "paper";
+    if (name === "windows") name = p.windowsLight ? "light" : "hark";
+    if (name === "schedule") name = scheduledDark(p) ? "midnight" : "light";
     var pal = PALETTES[name] || PALETTES.hark;
     var accent = p.accent || (p.theme === "windows" ? p.windowsAccent : "") || pal.accent;
     return { name: name, pal: pal, accent: accent };
   }
 
-  var currentPayload = null;
+  var currentPayload = null, forcedLight = false;
   function cssFor(p) {
     var r = resolvePalette(p), pal = r.pal, css = "";
     var vars = Object.keys(pal.vars).map(function (k) { return k + ":" + pal.vars[k] + " !important"; });
@@ -239,51 +249,113 @@
     var parent = document.head || document.documentElement;
     if (el.parentNode !== parent || el.nextSibling) parent.appendChild(el);
     var pal = out.r.pal;
-    if (pal.light) document.documentElement.setAttribute("data-theme", "light");
-    else if (out.r.name !== "hark" && document.documentElement.getAttribute("data-theme") === "light")
-      document.documentElement.setAttribute("data-theme", "dark");
+    var root = document.documentElement;
+    if (pal.light) { if (root.getAttribute("data-theme") !== "light") { root.setAttribute("data-theme", "light"); forcedLight = true; } }
+    else if (forcedLight || (out.r.name !== "hark" && root.getAttribute("data-theme") === "light")) {
+      root.setAttribute("data-theme", "dark"); forcedLight = false;
+    }
     quiet(invoke("title_bar", { caption: pal.caption || "", text: pal.text || "", dark: !!pal.dark }));
-    snow(!!pal.snow && p.snow !== false);
+    effect(p.snow !== false ? pal.effect : "");
   }
   window.__deskApplyTheme = applyTheme;
 
-  // ---- Snowfall (Christmas theme; can be turned off in Settings) -----------
+  // ---- Theme effects (snow, fireworks, bats, hearts…) ----------------------
   // A see-through canvas on top that ignores the mouse, so nothing in Hark
-  // moves or stops being clickable.
-  var snowCanvas = null, snowRaf = 0, flakes = [];
-  function snow(on) {
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) on = false;
-    if (!on) {
-      if (snowCanvas) { cancelAnimationFrame(snowRaf); snowCanvas.remove(); snowCanvas = null; }
-      return;
-    }
-    if (snowCanvas || !document.body) return;
-    snowCanvas = document.createElement("canvas");
-    snowCanvas.setAttribute("aria-hidden", "true");
-    snowCanvas.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483000;opacity:.55";
-    document.body.appendChild(snowCanvas);
-    var ctx = snowCanvas.getContext("2d");
-    function size() { snowCanvas.width = innerWidth; snowCanvas.height = innerHeight; }
+  // moves or stops being clickable. Off with Settings > Theme effects, and
+  // off when Windows asks for reduced motion.
+  var fx = { canvas: null, raf: 0, kind: "", parts: [], t0: 0 };
+  var EMOJI = { bats: "🦇", hearts: "💗", lanterns: "🏮", clovers: "☘️", leaves: "🍃" };
+  function rnd(a, b) { return a + Math.random() * (b - a); }
+  function effect(kind) {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) kind = "";
+    if (kind === fx.kind && (fx.canvas || !kind)) return;
+    if (fx.canvas) { cancelAnimationFrame(fx.raf); fx.canvas.remove(); fx.canvas = null; }
+    fx.kind = kind;
+    if (!kind || !document.body) { if (!document.body) fx.kind = ""; return; }
+    var c = fx.canvas = document.createElement("canvas");
+    c.setAttribute("aria-hidden", "true");
+    c.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483000;opacity:" +
+      (kind === "aurora" ? ".35" : kind === "snow" ? ".55" : ".5");
+    document.body.appendChild(c);
+    var ctx = c.getContext("2d");
+    function size() { if (fx.canvas) { c.width = innerWidth; c.height = innerHeight; } }
     size(); addEventListener("resize", size);
-    flakes = [];
-    for (var i = 0; i < 70; i++) flakes.push({ x: Math.random(), y: Math.random(), r: 1 + Math.random() * 2.2, s: .2 + Math.random() * .6, d: Math.random() * 6 });
-    var last = 0;
+    var count = { snow: 70, bubbles: 28, bats: 7, hearts: 14, lanterns: 8, clovers: 14, leaves: 14 }[kind] || 0;
+    fx.parts = [];
+    for (var i = 0; i < count; i++) fx.parts.push({ x: Math.random(), y: Math.random(), r: rnd(1, 2.2), s: rnd(.2, .8), d: Math.random() * 6, z: rnd(.6, 1.2) });
+    var bursts = [], last = 0, nextBurst = 0;
     (function tick(t) {
-      if (!snowCanvas) return;
-      snowRaf = requestAnimationFrame(tick);
+      if (!fx.canvas || fx.canvas !== c) return;
+      fx.raf = requestAnimationFrame(tick);
       if (document.hidden || t - last < 33) return;
       last = t;
-      var w = snowCanvas.width, h = snowCanvas.height;
+      var w = c.width, h = c.height;
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      flakes.forEach(function (f) {
-        f.y += f.s / h * 2.2; f.d += .01;
-        if (f.y > 1.02) { f.y = -0.02; f.x = Math.random(); }
-        var x = (f.x * w + Math.sin(f.d) * 12 + w) % w;
-        ctx.moveTo(x, f.y * h); ctx.arc(x, f.y * h, f.r, 0, Math.PI * 2);
+      if (kind === "aurora") {
+        [["rgba(80,240,170,", .0002, 0], ["rgba(150,110,255,", .00015, 2]].forEach(function (b) {
+          var cx = w * (.5 + Math.sin(t * b[1] + b[2]) * .35), cy = h * (.12 + Math.cos(t * b[1] * 1.3 + b[2]) * .06);
+          var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * .55);
+          g.addColorStop(0, b[0] + ".55)"); g.addColorStop(1, b[0] + "0)");
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+        });
+        return;
+      }
+      if (kind === "fireworks") {
+        if (t > nextBurst) {
+          nextBurst = t + rnd(1800, 4200);
+          var bx = rnd(.15, .85) * w, by = rnd(.12, .45) * h, hue = ["#d4b46a", "#f4efe4", "#ff9e5e", "#9ec9ff"][Math.floor(rnd(0, 4))];
+          for (var k = 0; k < 36; k++) { var ang = k / 36 * Math.PI * 2, sp = rnd(1.2, 2.6); bursts.push({ x: bx, y: by, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 1, col: hue }); }
+        }
+        bursts = bursts.filter(function (p) { return p.life > 0; });
+        bursts.forEach(function (p) {
+          p.x += p.vx; p.y += p.vy; p.vy += .03; p.vx *= .985; p.life -= .018;
+          ctx.globalAlpha = Math.max(p.life, 0); ctx.fillStyle = p.col;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+        return;
+      }
+      if (kind === "snow") {
+        ctx.fillStyle = "#ffffff"; ctx.beginPath();
+        fx.parts.forEach(function (f) {
+          f.y += f.s / h * 2.2; f.d += .01;
+          if (f.y > 1.02) { f.y = -0.02; f.x = Math.random(); }
+          var x = (f.x * w + Math.sin(f.d) * 12 + w) % w;
+          ctx.moveTo(x, f.y * h); ctx.arc(x, f.y * h, f.r, 0, Math.PI * 2);
+        });
+        ctx.fill();
+        return;
+      }
+      if (kind === "bubbles") {
+        ctx.strokeStyle = "rgba(180,235,255,.8)"; ctx.lineWidth = 1;
+        fx.parts.forEach(function (f) {
+          f.y -= f.s / h * 2.5; f.d += .02;
+          if (f.y < -0.03) { f.y = 1.03; f.x = Math.random(); }
+          var x = f.x * w + Math.sin(f.d) * 6;
+          ctx.beginPath(); ctx.arc(x, f.y * h, f.r * 3, 0, Math.PI * 2); ctx.stroke();
+        });
+        return;
+      }
+      // Emoji drifters: bats fly sideways, lanterns sway in place, the rest fall.
+      var ch = EMOJI[kind];
+      fx.parts.forEach(function (f) {
+        var x, y, size = 14 * f.z;
+        if (kind === "bats") {
+          f.x += f.s / w * 2.4; f.d += .05;
+          if (f.x > 1.05) { f.x = -0.05; f.y = Math.random() * .6; }
+          x = f.x * w; y = f.y * h + Math.sin(f.d) * 10;
+        } else if (kind === "lanterns") {
+          f.d += .015; x = f.x * w + Math.sin(f.d) * 4; y = (.03 + (f.y * .1)) * h; size = 18 * f.z;
+          if (f.x < .02 || f.x > .98) f.x = rnd(.05, .95);
+        } else {
+          f.y += f.s / h * 1.6; f.d += .02;
+          if (f.y > 1.03) { f.y = -0.03; f.x = Math.random(); }
+          x = f.x * w + Math.sin(f.d) * 18; y = f.y * h;
+        }
+        ctx.save(); ctx.translate(x, y);
+        if (kind !== "bats" && kind !== "lanterns") ctx.rotate(Math.sin(f.d) * .6);
+        ctx.font = size + 'px "Segoe UI Emoji",sans-serif'; ctx.fillText(ch, 0, 0); ctx.restore();
       });
-      ctx.fill();
     })(0);
   }
 

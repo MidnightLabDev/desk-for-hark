@@ -46,8 +46,15 @@ const THEMES: &[(&str, &str)] = &[
     ("hark", "Hark (default)"),
     ("midnight", "Midnight (OLED)"),
     ("teal", "Teal"),
-    ("paper", "Paper (light)"),
     ("christmas", "Christmas"),
+    ("newyear", "New Year"),
+    ("halloween", "Halloween"),
+    ("valentine", "Valentine's Day"),
+    ("lunar", "Lunar New Year"),
+    ("stpatricks", "St Patrick's Day"),
+    ("earthday", "Earth Day"),
+    ("aurora", "Aurora"),
+    ("ocean", "Ocean"),
     ("contrast", "High contrast"),
     ("windows", "Follow Windows"),
     ("schedule", "Scheduled (dark at night)"),
@@ -88,7 +95,8 @@ struct Settings {
     /// Always start hidden in the tray (login launches always do).
     start_hidden: bool,
     always_on_top: bool,
-    /// hark | midnight | teal | paper | contrast | windows | schedule
+    /// hark | midnight | teal | christmas | newyear | halloween | valentine | lunar
+    /// | stpatricks | earthday | aurora | ocean | contrast | windows | schedule
     theme: String,
     /// "#rrggbb" or empty for the theme's own accent.
     accent: String,
@@ -113,7 +121,8 @@ struct Settings {
     ask_where_to_save: bool,
     /// Put your clipboard back after "Send selection".
     restore_clipboard: bool,
-    /// Light snowfall with the Christmas theme.
+    /// Animated effect for event and mood themes (snow, fireworks…).
+    /// Kept as "snow" in settings.json for older installs.
     snow: bool,
 }
 
@@ -178,6 +187,11 @@ fn load_settings(path: &Path) -> Settings {
         .ok()
         .and_then(|t| serde_json::from_str::<Settings>(&t).ok())
         .unwrap_or_default();
+    let mut s = s;
+    // Paper was removed in 1.2.0.
+    if s.theme == "paper" {
+        s.theme = "hark".into();
+    }
     // Write back so the file always exists with every key visible.
     save_settings_file(path, &s);
     s
@@ -1199,7 +1213,6 @@ fn main() {
             let nav_handle = handle.clone();
             let popup_handle = handle.clone();
             let initial_theme = match s.theme.as_str() {
-                "paper" => Some(Theme::Light),
                 "windows" | "schedule" => None,
                 _ => Some(Theme::Dark),
             };
