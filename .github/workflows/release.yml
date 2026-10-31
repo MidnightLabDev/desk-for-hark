@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          $lines = Get-Content CHANGELOG.md
+          $lines = @(Get-Content CHANGELOG.md -ErrorAction SilentlyContinue)
           $start = [Array]::IndexOf($lines, "## $version")
           $notes = @()
           if ($start -ge 0) {
