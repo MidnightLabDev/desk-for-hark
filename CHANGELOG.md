@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3
+
+**Fixed**
+- **File previews and Download, take two**: clicking a file in a chat shows Hark's preview again (the app always fetches Hark's files fresh, so an earlier cached copy can't break the preview), and **Download** no longer opens an empty black window; the file is saved straight to Downloads.
+
 ## 1.4.2
 
 **New**

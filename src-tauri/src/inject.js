@@ -134,6 +134,63 @@
     });
   } catch (e) {}
 
+  // ---- Hark files: preview and Download ---------------------------------
+  // Hark's file preview fetches the file from its storage. A copy the
+  // WebView cached earlier without the storage's cross-origin headers makes
+  // that fetch fail, and Hark then shows only a Download card, so storage
+  // files are always fetched fresh.
+  function isStorage(u) {
+    try {
+      var h = new URL(u, location.href).hostname;
+      return /\.amazonaws\.com$|\.cloudfront\.net$|hark-media/.test(h);
+    } catch (e) { return false; }
+  }
+  var realFetch = window.fetch;
+  window.fetch = function (input, init) {
+    try {
+      var u = typeof input === "string" ? input : (input && input.url) || String(input);
+      if (isStorage(u)) {
+        init = Object.assign({}, init || {}, { cache: "no-store" });
+        if (typeof input !== "string" && input instanceof Request) input = input.url;
+      }
+    } catch (e) {}
+    return realFetch.call(this, input, init);
+  };
+  // Download opens an empty window first and then points it at the file.
+  // An empty app window just sat there black, so Hark gets a stand-in
+  // window instead and the app is handed the file's real address: files are
+  // saved, other pages open as usual. Files Hark builds in the page
+  // (blob: or data: links) are saved through the normal download path.
+  var realOpen = window.open;
+  function saveBlob(u, name) {
+    var a = document.createElement("a");
+    a.href = u; a.download = name || "";
+    a.style.display = "none";
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { a.remove(); }, 1000);
+  }
+  function openReal(u, name, features) {
+    u = String(u || "");
+    if (/^(blob|data):/i.test(u)) { saveBlob(u, ""); return null; }
+    return realOpen.call(window, u, name, features);
+  }
+  window.open = function (url, name, features) {
+    if (url && String(url) !== "about:blank") return openReal(url, name, features);
+    var sent = false;
+    function go(u) { if (!sent && u && String(u) !== "about:blank") { sent = true; openReal(u, name, features); } }
+    var loc = { assign: go, replace: go, reload: function () {}, toString: function () { return "about:blank"; } };
+    Object.defineProperty(loc, "href", { get: function () { return "about:blank"; }, set: go });
+    var fake = {
+      closed: false, opener: null, name: name || "",
+      close: function () { fake.closed = true; },
+      focus: function () {}, blur: function () {}, postMessage: function () {},
+      addEventListener: function () {}, removeEventListener: function () {},
+      document: { title: "", open: function () {}, write: function () {}, writeln: function () {}, close: function () {}, body: null },
+    };
+    Object.defineProperty(fake, "location", { get: function () { return loc; }, set: go });
+    return fake;
+  };
+
   // New-reply notifications are handled by the app itself (it reads the
   // open chat while the window is away), so the page doesn't watch every
   // change. Watching every change froze Hark on big file previews.
