@@ -636,6 +636,8 @@
           if (!Array.isArray(m)) m = typeof m === "object" ? Object.keys(m).map(function (k) { var v = m[k]; if (v && typeof v === "object" && !v.id) v.id = k; return v; }) : [];
           var more = j && j.older && typeof j.older.hasMore === "boolean" ? j.older.hasMore : (j && typeof j.hasMore === "boolean" ? j.hasMore : true);
           m.more = more;
+          // Hark pages back with the cursor it hands out (older.cursor).
+          m.cursor = j && j.older && j.older.cursor && j.older.cursor.id ? j.older.cursor : null;
           return m;
         });
     }
@@ -656,7 +658,8 @@
           var fresh = list.filter(function (m) { return m && m.id && !ids[m.id]; });
           fresh.forEach(function (m) { ids[m.id] = 1; collect(m); });
           pages++;
-          if (full && fresh.length && list.more !== false && pages < 10) return step(oldest(fresh));
+          if (full && fresh.length && list.more !== false && list.cursor && pages < 10)
+            return step(list.cursor).catch(function () {}); // keep what earlier pages found
         });
       }
       step(null).then(function () { loadedFor = id; }, function (e) { err = "Couldn't read this project's files (" + (e && e.message || e) + ")."; })

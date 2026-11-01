@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.2
+
+**Fixed**
+- **Files panel** stopped at the newest messages with "HTTP 400". It now pages back through older messages the way Hark does, and a problem with an older page no longer hides the files already found.
+
 ## 1.6.1
 
 **Fixed**
