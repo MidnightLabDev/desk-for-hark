@@ -1186,7 +1186,7 @@ fn reply_arrived(app: &AppHandle, body: &str) {
     let body: String = body.chars().take(200).collect();
     notify_text(&app, "New message in Hark", &body);
     set_badge(&app, true);
-    if let Ok(mut st) = WATCH.lock() {
+    if let Ok(mut st) = watch().lock() {
         st.notified += 1;
     }
 }
@@ -1195,81 +1195,96 @@ fn reply_arrived(app: &AppHandle, body: &str) {
 /// seconds it reads how much text the open chat holds. When the text grows
 /// and then settles, a reply has arrived. This runs from the app side, so it
 /// works even if the page can't message the app.
+#[derive(Default)]
 struct Watch {
     path: String,
-    len: Option<usize>,
-    grown: usize,
+    primed: bool,
+    seen: std::collections::HashSet<String>,
+    pending: Vec<String>,
     grown_at: Option<Instant>,
-    tail: String,
     checks: u64,
     notified: u64,
     last_len: usize,
 }
-static WATCH: std::sync::Mutex<Watch> = std::sync::Mutex::new(Watch {
-    path: String::new(),
-    len: None,
-    grown: 0,
-    grown_at: None,
-    tail: String::new(),
-    checks: 0,
-    notified: 0,
-    last_len: 0,
-});
+static WATCH: std::sync::OnceLock<std::sync::Mutex<Watch>> = std::sync::OnceLock::new();
+fn watch() -> &'static std::sync::Mutex<Watch> {
+    WATCH.get_or_init(|| std::sync::Mutex::new(Watch::default()))
+}
 
-const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';return [location.pathname,t.length,t.slice(-240)];})()";
+const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';return [location.pathname,t];})()";
 
+/// Lines of the page that weren't there before are the new reply. Sidebar
+/// chats moving around don't count, because their titles were already seen.
 #[cfg(windows)]
 fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
     let app = app.clone();
     win::eval_page(w, WATCH_JS, move |res| {
         let Ok(serde_json::Value::Array(v)) = serde_json::from_str::<serde_json::Value>(&res) else { return };
         let path = v.first().and_then(|x| x.as_str()).unwrap_or("").to_string();
-        let len = v.get(1).and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-        let tail = v.get(2).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let text = v.get(1).and_then(|x| x.as_str()).unwrap_or("");
+        let lines: Vec<String> = text
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|l| !l.is_empty())
+            .collect();
         let mut fire = None;
-        if let Ok(mut st) = WATCH.lock() {
+        if let Ok(mut st) = watch().lock() {
             st.checks += 1;
-            st.last_len = len;
-            let prev_len = st.len;
-            let same_chat = st.path == path;
-            match prev_len {
-                Some(prev) if same_chat => {
-                    if len > prev {
-                        st.grown += len - prev;
-                        st.grown_at = Some(Instant::now());
-                        st.tail = tail;
-                    } else if st.grown >= 40
-                        && st.grown_at.map(|t| t.elapsed() >= Duration::from_secs(3)).unwrap_or(false)
-                    {
-                        st.grown = 0;
-                        fire = Some(std::mem::take(&mut st.tail));
-                    }
-                }
-                _ => {
-                    st.path = path;
-                    st.grown = 0;
+            st.last_len = text.chars().count();
+            if !st.primed || st.path != path {
+                st.path = path;
+                st.primed = true;
+                st.pending.clear();
+                st.grown_at = None;
+                st.seen = lines.into_iter().collect();
+                return;
+            }
+            let mut grew = false;
+            for l in &lines {
+                if !st.seen.contains(l) {
+                    st.seen.insert(l.clone());
+                    st.pending.push(l.clone());
+                    grew = true;
                 }
             }
-            st.len = Some(len);
+            if grew {
+                st.grown_at = Some(Instant::now());
+            } else if !st.pending.is_empty()
+                && st.grown_at.map(|t| t.elapsed() >= Duration::from_secs(3)).unwrap_or(false)
+            {
+                // Keep only lines still on the page (drops half-streamed
+                // versions of a paragraph) and skip short ones like times.
+                let now: std::collections::HashSet<&String> = lines.iter().collect();
+                let body: Vec<String> = std::mem::take(&mut st.pending)
+                    .into_iter()
+                    .filter(|l| now.contains(l) && l.chars().count() >= 12)
+                    .collect();
+                let body = body.join(" ");
+                if body.chars().count() >= 20 {
+                    fire = Some(body);
+                }
+            }
         }
         if let Some(t) = fire {
-            let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
-            let n = t.chars().count();
-            let t: String = if n > 160 { format!("…{}", t.chars().skip(n - 160).collect::<String>()) } else { t };
+            let t: String = if t.chars().count() > 160 {
+                format!("{}…", t.chars().take(160).collect::<String>())
+            } else {
+                t
+            };
             reply_arrived(&app, &t);
         }
     });
 }
 
 fn watch_reset() {
-    if let Ok(mut st) = WATCH.lock() {
-        st.len = None;
-        st.grown = 0;
+    if let Ok(mut st) = watch().lock() {
+        st.primed = false;
+        st.pending.clear();
     }
 }
 
 fn watch_status(app: &AppHandle) {
-    let (checks, notified, len) = WATCH
+    let (checks, notified, len) = watch()
         .lock()
         .map(|s| (s.checks, s.notified, s.last_len))
         .unwrap_or((0, 0, 0));

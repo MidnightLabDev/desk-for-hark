@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.9
+
+**Fixed**
+- **New-message notifications now show the reply itself**: 1.3.8's pop-up could show chat titles from the sidebar instead of the message. The app now only uses text that's genuinely new in the chat, and skips changes that are just chats moving around in the sidebar.
+
 ## 1.3.8
 
 **Fixed**
