@@ -440,3 +440,17 @@ fn urlencode(s: &str) -> String {
     }
     out
 }
+
+/// Keeps Hark's page running while the window is minimised or hidden in the
+/// tray. WebView2 otherwise marks the page as hidden, and Hark then stops
+/// updating it, so new replies (and their notifications) only showed up once
+/// the window came back.
+pub fn keep_page_awake(window: &WebviewWindow) {
+    let _ = window.with_webview(|wv| unsafe {
+        let c = wv.controller();
+        let mut vis = windows::core::BOOL::default();
+        if c.IsVisible(&mut vis).is_ok() && !vis.as_bool() {
+            let _ = c.SetIsVisible(true);
+        }
+    });
+}

@@ -120,6 +120,20 @@
   }
   setInterval(checkTitle, 2000);
 
+  // ---- Stay "visible" in the background ------------------------------------
+  // Hark pauses live updates when its page is hidden. In the app the window
+  // is often minimised or in the tray on purpose, so the page always reports
+  // itself as visible and Hark keeps receiving replies.
+  try {
+    Object.defineProperty(Document.prototype, "hidden", { configurable: true, get: function () { return false; } });
+    Object.defineProperty(Document.prototype, "visibilityState", { configurable: true, get: function () { return "visible"; } });
+    Object.defineProperty(Document.prototype, "webkitHidden", { configurable: true, get: function () { return false; } });
+    ["visibilitychange", "webkitvisibilitychange"].forEach(function (t) {
+      document.addEventListener(t, function (e) { e.stopImmediatePropagation(); }, true);
+      window.addEventListener(t, function (e) { e.stopImmediatePropagation(); }, true);
+    });
+  } catch (e) {}
+
   // ---- New-reply notifications -------------------------------------------
   // Hark's web app doesn't always raise a browser notification (and web push
   // can't reach an embedded WebView2), so the app watches the page itself:

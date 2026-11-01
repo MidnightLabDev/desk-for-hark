@@ -1546,6 +1546,22 @@ fn main() {
                 _ => {}
             });
 
+            // While minimised or in the tray, keep Hark's page awake so new
+            // replies still arrive (and notify) in the background.
+            #[cfg(windows)]
+            {
+                let awake = handle.clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    if let Some(w) = main_window(&awake) {
+                        let away = !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false);
+                        if away {
+                            win::keep_page_awake(&w);
+                        }
+                    }
+                });
+            }
+
             let args: Vec<String> = std::env::args().skip(1).collect();
             let start_hidden = s.start_hidden || args.iter().any(|a| a == "--hidden");
             if !start_hidden {

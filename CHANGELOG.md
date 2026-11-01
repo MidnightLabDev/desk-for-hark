@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.7
+
+**Fixed**
+- **No notifications while minimised or hidden with Alt+Space**: Windows told Hark's page it was hidden, so Hark stopped updating it until you came back, and there was nothing to notify about. The page now stays awake in the background (minimised or in the tray), so replies arrive and you get the notification and the unread dot.
+
 ## 1.3.6
 
 **Fixed**
