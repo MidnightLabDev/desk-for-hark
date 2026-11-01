@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0
+
+**New**
+- **Click a new-message notification to open that chat**: the window comes back and goes straight to the chat or project the reply arrived in.
+
 ## 1.3.9
 
 **Fixed**

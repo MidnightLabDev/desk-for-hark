@@ -1174,17 +1174,58 @@ fn mark_toast() {
 /// From the page's reply watcher: new text arrived while the window wasn't focused.
 #[tauri::command]
 fn new_reply(app: AppHandle, body: String) {
-    reply_arrived(&app, &body);
+    reply_arrived(&app, &body, None);
 }
 
-fn reply_arrived(app: &AppHandle, body: &str) {
+/// Opens the chat a notification was about, in the main window.
+fn open_chat(app: &AppHandle, path: &str) {
+    show_main(app);
+    if path.is_empty() || !path.starts_with('/') {
+        return;
+    }
+    if let Some(w) = main_window(app) {
+        let here = w.url().ok();
+        let same = here.as_ref().map(|u| u.path() == path).unwrap_or(false);
+        if !same {
+            if let Ok(u) = Url::parse(&format!("https://app.hark.com{path}")) {
+                let _ = w.navigate(u);
+            }
+        }
+    }
+}
+
+/// A Windows notification that opens the chat it's about when clicked.
+fn notify_reply(app: &AppHandle, body: &str, path: Option<String>) {
+    #[cfg(windows)]
+    {
+        use tauri_winrt_notification::Toast;
+        let id = app.config().identifier.clone();
+        let handle = app.clone();
+        let shown = Toast::new(&id)
+            .title("New message in Hark")
+            .text1(body)
+            .on_activated(move |_action| {
+                open_chat(&handle, path.as_deref().unwrap_or(""));
+                Ok(())
+            })
+            .show();
+        if shown.is_ok() {
+            return;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = &path;
+    notify_text(app, "New message in Hark", body);
+}
+
+fn reply_arrived(app: &AppHandle, body: &str, path: Option<String>) {
     if main_is_focused(app) || toast_recently(15) {
         return;
     }
     let app = app.clone();
     mark_toast();
     let body: String = body.chars().take(200).collect();
-    notify_text(&app, "New message in Hark", &body);
+    notify_reply(&app, &body, path);
     set_badge(&app, true);
     if let Ok(mut st) = watch().lock() {
         st.notified += 1;
@@ -1261,17 +1302,17 @@ fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
                     .collect();
                 let body = body.join(" ");
                 if body.chars().count() >= 20 {
-                    fire = Some(body);
+                    fire = Some((body, st.path.clone()));
                 }
             }
         }
-        if let Some(t) = fire {
+        if let Some((t, path)) = fire {
             let t: String = if t.chars().count() > 160 {
                 format!("{}…", t.chars().take(160).collect::<String>())
             } else {
                 t
             };
-            reply_arrived(&app, &t);
+            reply_arrived(&app, &t, Some(path));
         }
     });
 }
