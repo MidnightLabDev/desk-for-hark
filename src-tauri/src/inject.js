@@ -629,7 +629,15 @@
       if (before) { q.set("before", before.id); q.set("beforeCreatedAt", String(before.createdAt != null ? before.createdAt : before.created_at)); }
       return realFetch.call(window, "/api/messages/history?" + q.toString(), { credentials: "include", headers: hdr(), cache: "no-store" })
         .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(function (j) { return (j && (j.messages || j.items)) || (Array.isArray(j) ? j : []); });
+        .then(function (j) {
+          // Hark answers {messages: [...]} or, in its newer "records" shape,
+          // {messages: {id: message}}; either way we want a plain list.
+          var m = Array.isArray(j) ? j : (j && (j.messages || j.items || j.records)) || [];
+          if (!Array.isArray(m)) m = typeof m === "object" ? Object.keys(m).map(function (k) { var v = m[k]; if (v && typeof v === "object" && !v.id) v.id = k; return v; }) : [];
+          var more = j && j.older && typeof j.older.hasMore === "boolean" ? j.older.hasMore : (j && typeof j.hasMore === "boolean" ? j.hasMore : true);
+          m.more = more;
+          return m;
+        });
     }
     function oldest(list) {
       var o = null;
@@ -648,7 +656,7 @@
           var fresh = list.filter(function (m) { return m && m.id && !ids[m.id]; });
           fresh.forEach(function (m) { ids[m.id] = 1; collect(m); });
           pages++;
-          if (full && fresh.length && pages < 10) return step(oldest(fresh));
+          if (full && fresh.length && list.more !== false && pages < 10) return step(oldest(fresh));
         });
       }
       step(null).then(function () { loadedFor = id; }, function (e) { err = "Couldn't read this project's files (" + (e && e.message || e) + ")."; })

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1
+
+**Fixed**
+- **Files panel** showed "Couldn't read this project's files (list.filter is not a function)". It now understands both ways Hark sends a project's history.
+
 ## 1.6.0
 
 **New**
