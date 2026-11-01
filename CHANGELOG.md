@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.3
+
+**Fixed**
+- **Files panel**: clicking a file did nothing. It now scrolls to the message the file came in and highlights it, or, when that message isn't loaded, opens it in Hark's own message view.
+- Notifications for the main chat now open Hark's chat page (`/chat`).
+
 ## 1.6.2
 
 **Fixed**

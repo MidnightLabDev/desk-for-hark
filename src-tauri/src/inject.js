@@ -744,12 +744,20 @@
       });
       statusEl.textContent = err || (loading ? "Reading this project's files…" : (all.length ? "" : (q ? "No files match." : "No files in this project's chat yet.")));
     }
+    // Scrolls to the message when it's on screen; otherwise opens it in
+    // Hark's own message view (/project/<id>/<message>), which has the preview.
     function goTo(f) {
       var id = projectId(); if (!id) return;
-      var path = f.msg ? "/project/" + id + "/" + f.msg : "/project/" + id;
-      if (location.pathname === path) return;
-      try { history.pushState(history.state, "", path); window.dispatchEvent(new PopStateEvent("popstate", { state: history.state })); }
-      catch (e) { location.assign(path); }
+      var sel = f.msg ? '[data-message-id="' + String(f.msg).replace(/["\\]/g, "") + '"]' : null;
+      var node = sel && document.querySelector(sel);
+      if (node) {
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+        var old = node.style.outline;
+        node.style.outline = "2px solid rgba(127,127,255,.6)"; node.style.borderRadius = node.style.borderRadius || "12px";
+        setTimeout(function () { node.style.outline = old; }, 1600);
+        return;
+      }
+      location.assign(f.msg ? "/project/" + id + "/" + f.msg : "/project/" + id);
     }
     function download(f) {
       function viaPage(u) {

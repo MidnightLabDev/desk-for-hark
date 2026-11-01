@@ -1461,7 +1461,7 @@ fn waiting_state(v: &str) -> bool {
 
 fn conv_path(id: &str, kind: &str) -> String {
     if kind.to_ascii_lowercase().contains("main") {
-        "/".to_string()
+        "/chat".to_string()
     } else {
         format!("/project/{id}")
     }
