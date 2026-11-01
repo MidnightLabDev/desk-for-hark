@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
-    take_pwstr, DownloadStartingEventHandler, NavigationCompletedEventHandler, StateChangedEventHandler,
+    take_pwstr, DownloadStartingEventHandler, ExecuteScriptCompletedHandler, NavigationCompletedEventHandler, StateChangedEventHandler,
     PermissionRequestedEventHandler, ProcessFailedEventHandler,
 };
 use windows::core::{Interface, HSTRING, PWSTR};
@@ -452,5 +452,18 @@ pub fn keep_page_awake(window: &WebviewWindow) {
         if c.IsVisible(&mut vis).is_ok() && !vis.as_bool() {
             let _ = c.SetIsVisible(true);
         }
+    });
+}
+
+/// Runs a script in Hark's page from the app side (no page-to-app messaging
+/// involved) and hands back its JSON result.
+pub fn eval_page(window: &WebviewWindow, js: &'static str, cb: impl FnOnce(String) + Send + 'static) {
+    let _ = window.with_webview(move |wv| unsafe {
+        let Ok(core) = wv.controller().CoreWebView2() else { return };
+        let handler = ExecuteScriptCompletedHandler::create(Box::new(move |_err, result| {
+            cb(result);
+            Ok(())
+        }));
+        let _ = core.ExecuteScript(&HSTRING::from(js), &handler);
     });
 }

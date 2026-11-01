@@ -1174,13 +1174,109 @@ fn mark_toast() {
 /// From the page's reply watcher: new text arrived while the window wasn't focused.
 #[tauri::command]
 fn new_reply(app: AppHandle, body: String) {
-    if main_is_focused(&app) || toast_recently(15) {
+    reply_arrived(&app, &body);
+}
+
+fn reply_arrived(app: &AppHandle, body: &str) {
+    if main_is_focused(app) || toast_recently(15) {
         return;
     }
+    let app = app.clone();
     mark_toast();
     let body: String = body.chars().take(200).collect();
     notify_text(&app, "New message in Hark", &body);
     set_badge(&app, true);
+    if let Ok(mut st) = WATCH.lock() {
+        st.notified += 1;
+    }
+}
+
+/// The app's own check on Hark's page while the window is away: every few
+/// seconds it reads how much text the open chat holds. When the text grows
+/// and then settles, a reply has arrived. This runs from the app side, so it
+/// works even if the page can't message the app.
+struct Watch {
+    path: String,
+    len: Option<usize>,
+    grown: usize,
+    grown_at: Option<Instant>,
+    tail: String,
+    checks: u64,
+    notified: u64,
+    last_len: usize,
+}
+static WATCH: std::sync::Mutex<Watch> = std::sync::Mutex::new(Watch {
+    path: String::new(),
+    len: None,
+    grown: 0,
+    grown_at: None,
+    tail: String::new(),
+    checks: 0,
+    notified: 0,
+    last_len: 0,
+});
+
+const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';return [location.pathname,t.length,t.slice(-240)];})()";
+
+#[cfg(windows)]
+fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
+    let app = app.clone();
+    win::eval_page(w, WATCH_JS, move |res| {
+        let Ok(serde_json::Value::Array(v)) = serde_json::from_str::<serde_json::Value>(&res) else { return };
+        let path = v.first().and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let len = v.get(1).and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+        let tail = v.get(2).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let mut fire = None;
+        if let Ok(mut st) = WATCH.lock() {
+            st.checks += 1;
+            st.last_len = len;
+            let prev_len = st.len;
+            let same_chat = st.path == path;
+            match prev_len {
+                Some(prev) if same_chat => {
+                    if len > prev {
+                        st.grown += len - prev;
+                        st.grown_at = Some(Instant::now());
+                        st.tail = tail;
+                    } else if st.grown >= 40
+                        && st.grown_at.map(|t| t.elapsed() >= Duration::from_secs(3)).unwrap_or(false)
+                    {
+                        st.grown = 0;
+                        fire = Some(std::mem::take(&mut st.tail));
+                    }
+                }
+                _ => {
+                    st.path = path;
+                    st.grown = 0;
+                }
+            }
+            st.len = Some(len);
+        }
+        if let Some(t) = fire {
+            let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+            let n = t.chars().count();
+            let t: String = if n > 160 { format!("…{}", t.chars().skip(n - 160).collect::<String>()) } else { t };
+            reply_arrived(&app, &t);
+        }
+    });
+}
+
+fn watch_reset() {
+    if let Ok(mut st) = WATCH.lock() {
+        st.len = None;
+        st.grown = 0;
+    }
+}
+
+fn watch_status(app: &AppHandle) {
+    let (checks, notified, len) = WATCH
+        .lock()
+        .map(|s| (s.checks, s.notified, s.last_len))
+        .unwrap_or((0, 0, 0));
+    let text = format!(
+        "Background checks of Hark's page: {checks}\nText in the open chat at the last check: {len} characters\nNew-message notifications shown: {notified}\n\nChecks run only while the window is minimised or hidden. If checks stay at 0, or the text length doesn't change when a reply arrives, please report it."
+    );
+    app.dialog().message(text).title("Notification status").kind(MessageDialogKind::Info).show(|_| {});
 }
 
 #[tauri::command]
@@ -1557,6 +1653,9 @@ fn main() {
                         let away = !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false);
                         if away {
                             win::keep_page_awake(&w);
+                            watch_tick(&awake, &w);
+                        } else {
+                            watch_reset();
                         }
                     }
                 });
@@ -1598,6 +1697,7 @@ fn main() {
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
             let test_toast = MenuItem::with_id(app, "test_toast", "Send a test notification", true, None::<&str>)?;
+            let watch_item = MenuItem::with_id(app, "watch_status", "Notification status…", true, None::<&str>)?;
 
             let zoom_in = MenuItem::with_id(app, "zoom_in", "Zoom in", true, None::<&str>)?;
             let zoom_out = MenuItem::with_id(app, "zoom_out", "Zoom out", true, None::<&str>)?;
@@ -1645,6 +1745,7 @@ fn main() {
                     &shot,
                     &reload,
                     &test_toast,
+                    &watch_item,
                     &PredefinedMenuItem::separator(app)?,
                     &theme_menu,
                     &view_menu,
@@ -1700,6 +1801,7 @@ fn main() {
                         "quick" => show_quick(app),
                         "screenshot" => screenshot_to_hark(app),
                         "reload" => reload_main(app),
+                        "watch_status" => watch_status(app),
                         "test_toast" => notify_text(
                             app,
                             "Desk for Hark",

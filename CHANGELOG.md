@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.8
+
+**Fixed**
+- **New-message notifications while hidden or minimised, take three**: the app now checks Hark's open chat itself every few seconds while the window is away, instead of relying on the page to tell it, and notifies when a new reply has arrived.
+
+**New**
+- **Tray > Notification status…** shows how many background checks have run and how many notifications were shown, to help track down problems.
+
 ## 1.3.7
 
 **Fixed**
