@@ -425,7 +425,11 @@ fn set_badge(app: &AppHandle, on: bool) {
 
 fn main_is_focused(app: &AppHandle) -> bool {
     main_window(app)
-        .map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+        .map(|w| {
+            w.is_visible().unwrap_or(false)
+                && !w.is_minimized().unwrap_or(false)
+                && w.is_focused().unwrap_or(false)
+        })
         .unwrap_or(false)
 }
 
@@ -1000,7 +1004,9 @@ fn new_reply(app: AppHandle, body: String) {
 
 #[tauri::command]
 fn badge(app: AppHandle, on: bool) {
-    if on && main_is_focused(&app) {
+    // Lit only while in the background; cleared only once the window is back
+    // in front (a title change from Hark mustn't wipe a dot for a new reply).
+    if main_is_focused(&app) == on {
         return;
     }
     set_badge(&app, on);

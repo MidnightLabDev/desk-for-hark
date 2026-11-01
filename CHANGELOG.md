@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.5
+
+**Fixed**
+- **Notifications and the tray dot for new replies while minimised**: the page couldn't reliably tell the window was minimised, so it never asked for a notification. The app now decides that itself, also checks how much text the chat holds every few seconds as a backup, and keeps the tray and taskbar dot lit until you bring the window back.
+
 ## 1.3.4
 
 **Fixed**
