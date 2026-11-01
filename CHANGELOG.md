@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.4
+
+**Fixed**
+- **Download opens no extra window**: Hark's Download used to open an empty black window. Windows the app opens for Hark now stay hidden; a download is saved straight to Downloads (with a "Saved to Downloads" notification) and the hidden window closes itself. A window only appears if it turns out to be a real page.
+
 ## 1.4.3
 
 **Fixed**

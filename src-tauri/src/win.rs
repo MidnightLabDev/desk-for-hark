@@ -243,6 +243,9 @@ pub struct HookOptions {
     pub auto_grant_mic: bool,
     pub ask_before_saving: bool,
     pub offline_url: String,
+    /// Set for a hidden popup the app built for Hark: it's shown only if it
+    /// turns out to be a real page, and closed once its download is done.
+    pub popup: Option<String>,
 }
 
 /// Registers WebView2 event handlers on the main window.
@@ -294,10 +297,31 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
         // Offline: a failed page load shows our retry page instead of an error.
         let offline_url = opts.offline_url.clone();
         let app_nav = app.clone();
+        let popup_nav = opts.popup.clone();
         let h = NavigationCompletedEventHandler::create(Box::new(move |sender, args| {
             let Some(args) = args else { return Ok(()) };
             let mut ok = windows::core::BOOL::default();
             args.IsSuccess(&mut ok)?;
+            if let Some(label) = &popup_nav {
+                // A popup only appears once a real page has loaded in it.
+                // Downloads never finish as a page, so they stay invisible.
+                let mut src = PWSTR::null();
+                if let Some(s) = &sender {
+                    let _ = s.Source(&mut src);
+                }
+                let src = take_pwstr(src);
+                if ok.as_bool() && src.starts_with("http") {
+                    let a = app_nav.clone();
+                    let l = label.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(w) = a.get_webview_window(&l) {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    });
+                }
+                return Ok(());
+            }
             if ok.as_bool() {
                 return Ok(());
             }
@@ -340,6 +364,7 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
         if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
             let app_dl = app.clone();
             let ask = opts.ask_before_saving;
+            let popup_dl = opts.popup.clone();
             let h = DownloadStartingEventHandler::create(Box::new(move |_sender, args| {
                 let Some(args) = args else { return Ok(()) };
                 let _ = args.SetHandled(true);
@@ -358,6 +383,7 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
                     let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
                     if let Ok(op) = args.DownloadOperation() {
                         let app_done = app_dl.clone();
+                        let popup_done = popup_dl.clone();
                         let done = std::cell::Cell::new(false);
                         let sh = StateChangedEventHandler::create(Box::new(move |op, _| {
                             let Some(op) = op else { return Ok(()) };
@@ -370,6 +396,11 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
                             } else if st == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED {
                                 done.set(true);
                                 crate::notify_text(&app_done, "Download failed", &shown);
+                            }
+                            if done.get() {
+                                if let Some(l) = &popup_done {
+                                    crate::close_hidden_popup(&app_done, l.clone());
+                                }
                             }
                             Ok(())
                         }));

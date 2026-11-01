@@ -389,6 +389,18 @@ fn download_url(app: &AppHandle, url: &Url) {
 static POPUP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Closes a popup a moment later (not from inside its own navigation callback).
+/// Closes a popup the app built, unless it became a visible page.
+pub(crate) fn close_hidden_popup(app: &AppHandle, label: String) {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app2.get_webview_window(&label) {
+            if !w.is_visible().unwrap_or(false) {
+                let _ = w.destroy();
+            }
+        }
+    });
+}
+
 fn close_popup_later(app: &AppHandle, label: String) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -411,6 +423,7 @@ fn hark_popup(app: &AppHandle, url: &Url, features: tauri::webview::NewWindowFea
         .title("Desk for Hark")
         .theme(Some(Theme::Dark))
         .window_features(features)
+        .visible(false)
         .on_navigation(move |u| {
             if is_hark_file(u) {
                 download_url(&nav_app, u);
@@ -426,7 +439,28 @@ fn hark_popup(app: &AppHandle, url: &Url, features: tauri::webview::NewWindowFea
         })
         .build();
     match built {
-        Ok(window) => NewWindowResponse::Create { window },
+        Ok(window) => {
+            // The window stays hidden: a download is saved without anything
+            // appearing, and a real page shows the window once it loads.
+            #[cfg(windows)]
+            win::install_webview_hooks(
+                &window,
+                win::HookOptions {
+                    auto_grant_mic: false,
+                    ask_before_saving: settings(app).ask_before_saving,
+                    offline_url: String::new(),
+                    popup: Some(label.clone()),
+                },
+            );
+            // Tidy up a hidden popup that never turned into anything.
+            let a = app.clone();
+            let l = label.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(600));
+                close_hidden_popup(&a, l);
+            });
+            NewWindowResponse::Create { window }
+        }
         Err(_) => NewWindowResponse::Allow,
     }
 }
@@ -1704,6 +1738,7 @@ fn main() {
                         auto_grant_mic: s.auto_grant_mic,
                         ask_before_saving: s.ask_before_saving,
                         offline_url: format!("{LOCAL_ORIGIN}/offline.html"),
+                        popup: None,
                     },
                 );
                 win::set_jump_list(APP_ID);
