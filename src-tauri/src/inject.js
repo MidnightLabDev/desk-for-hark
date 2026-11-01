@@ -715,7 +715,7 @@
       var r = el("div", "display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer");
       r.onmouseenter = function () { r.style.background = "rgba(127,127,127,.12)"; };
       r.onmouseleave = function () { r.style.background = "transparent"; };
-      r.title = f.name + " · open in chat";
+      r.title = f.name + " · preview";
       r.appendChild(el("span", "width:18px;text-align:center", icon(f)));
       var mid = el("div", "flex:1;min-width:0");
       mid.appendChild(el("div", "white-space:nowrap;overflow:hidden;text-overflow:ellipsis", f.name));
@@ -725,8 +725,10 @@
       copy.onclick = function (e) { e.stopPropagation(); try { navigator.clipboard.writeText(f.name); copy.textContent = "✓"; setTimeout(function () { copy.textContent = "⧉"; }, 1200); } catch (x) {} };
       var dl = el("button", btnCss(), "⤓"); dl.title = "Download to Downloads";
       dl.onclick = function (e) { e.stopPropagation(); download(f); };
-      r.appendChild(copy); r.appendChild(dl);
-      r.onclick = function () { goTo(f); };
+      var chat = el("button", btnCss() + ";font-size:13px", "⌕"); chat.title = "Show in chat";
+      chat.onclick = function (e) { e.stopPropagation(); goTo(f); };
+      r.appendChild(chat); r.appendChild(copy); r.appendChild(dl);
+      r.onclick = function () { preview(f); };
       return r;
     }
     function render() {
@@ -744,29 +746,145 @@
       });
       statusEl.textContent = err || (loading ? "Reading this project's files…" : (all.length ? "" : (q ? "No files match." : "No files in this project's chat yet.")));
     }
-    // Scrolls to the message when it's on screen; otherwise opens it in
-    // Hark's own message view (/project/<id>/<message>), which has the preview.
+    // "Show in chat": scrolls to the message and outlines it. When it isn't
+    // loaded yet, scrolls the chat up step by step so Hark loads older
+    // messages (about 10 seconds at most). Never reloads the page.
+    var finding = 0;
+    function msgNode(id) {
+      try { return document.querySelector('[data-message-id="' + CSS.escape(String(id)) + '"]'); } catch (e) { return null; }
+    }
+    function scroller() {
+      var any = document.querySelector("[data-message-id]");
+      for (var n = any && any.parentElement; n && n !== document.body; n = n.parentElement) {
+        var cs = getComputedStyle(n);
+        if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 4) return n;
+      }
+      return null;
+    }
+    function flash(node) {
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      var old = node.style.outline, oldOff = node.style.outlineOffset;
+      node.style.outline = "2px solid rgba(127,127,255,.65)"; node.style.outlineOffset = "4px";
+      setTimeout(function () { node.style.outline = old; node.style.outlineOffset = oldOff; }, 1800);
+    }
     function goTo(f) {
-      var id = projectId(); if (!id) return;
-      var sel = f.msg ? '[data-message-id="' + String(f.msg).replace(/["\\]/g, "") + '"]' : null;
-      var node = sel && document.querySelector(sel);
-      if (node) {
-        node.scrollIntoView({ behavior: "smooth", block: "center" });
-        var old = node.style.outline;
-        node.style.outline = "2px solid rgba(127,127,255,.6)"; node.style.borderRadius = node.style.borderRadius || "12px";
-        setTimeout(function () { node.style.outline = old; }, 1600);
+      if (!f.msg) { banner("This file isn't linked to a message.", 2500); return; }
+      var node = msgNode(f.msg);
+      if (node) { flash(node); return; }
+      var run = ++finding, tries = 0;
+      banner("Finding it in the chat…");
+      (function step() {
+        if (run !== finding) return;
+        var n = msgNode(f.msg);
+        if (n) { if (bannerEl) bannerEl.style.display = "none"; flash(n); return; }
+        if (++tries > 25) { banner("Couldn't find that message in the chat. It may be further back.", 3500); return; }
+        var sc = scroller();
+        if (sc) sc.scrollTop = 0;
+        setTimeout(step, 400);
+      })();
+    }
+
+    // Built-in viewer: images, PDF, text and code, audio and video. Other
+    // files show their name with a Download button.
+    var viewer = null, viewerUrl = null;
+    var TEXT_EXT = /\.(txt|md|markdown|csv|tsv|log|json|jsonl|xml|ya?ml|toml|ini|cfg|conf|js|mjs|cjs|ts|tsx|jsx|py|rb|rs|go|java|kt|c|h|cpp|hpp|cs|php|swift|sh|bash|ps1|bat|sql|html?|css|scss|less|vue|svelte|lua|r|dart|gradle)$/i;
+    function kindOf(f) {
+      var n = f.name.toLowerCase(), k = (f.kind || "").toLowerCase();
+      if (/^image\//.test(k) || /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/.test(n)) return "image";
+      if (/pdf/.test(k) || /\.pdf$/.test(n)) return "pdf";
+      if (/^audio\//.test(k) || /\.(mp3|wav|m4a|ogg|flac|aac)$/.test(n)) return "audio";
+      if (/^video\//.test(k) || /\.(mp4|webm|mov|m4v)$/.test(n)) return "video";
+      if (/^text\//.test(k) || /json|xml|javascript|typescript/.test(k) || TEXT_EXT.test(n)) return "text";
+      return "other";
+    }
+    function closeViewer() {
+      if (viewer) { viewer.remove(); viewer = null; }
+      if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+    }
+    function absUrl(f) { return f.url ? new URL(f.url, location.href).href : ""; }
+    function fetchFile(u) {
+      var cross = new URL(u).host !== location.host;
+      return realFetch.call(window, u, { credentials: cross ? "omit" : "include", cache: "no-store" })
+        .then(function (r) { if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; } return r.blob(); });
+    }
+    // Links from Hark expire; read the history again for a fresh one.
+    function freshen(f) {
+      return new Promise(function (res) {
+        loadedFor = null; load(true);
+        var t = 0, iv = setInterval(function () {
+          if (!loading || ++t > 40) { clearInterval(iv); res(files[f.key] || f); }
+        }, 250);
+      });
+    }
+    function preview(f, retried) {
+      closeViewer();
+      viewer = el("div", "position:fixed;inset:0;z-index:2147483600;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center");
+      viewer.onclick = function (e) { if (e.target === viewer) closeViewer(); };
+      var box = el("div", "width:min(1100px,92vw);height:min(86vh,1000px);display:flex;flex-direction:column;background:" + BG + ";color:" + INK + ";" +
+        "border:1px solid " + LINE + ";border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);font:13px 'Segoe UI Variable','Segoe UI',sans-serif");
+      var head = el("div", "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid " + LINE);
+      head.appendChild(el("div", "flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", f.name));
+      var chat = el("button", btnCss(), "⌕"); chat.title = "Show in chat"; chat.onclick = function () { closeViewer(); goTo(f); };
+      var dl = el("button", btnCss(), "⤓"); dl.title = "Download to Downloads"; dl.onclick = function () { download(f); };
+      var x = el("button", btnCss(), "✕"); x.title = "Close (Esc)"; x.onclick = closeViewer;
+      head.appendChild(chat); head.appendChild(dl); head.appendChild(x);
+      var body = el("div", "flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center");
+      box.appendChild(head); box.appendChild(body); viewer.appendChild(box); document.body.appendChild(viewer);
+      function note(text, withDl) {
+        body.textContent = "";
+        var w = el("div", "text-align:center;color:" + SUB + ";padding:30px");
+        w.appendChild(el("div", "font-size:34px;margin-bottom:10px", icon(f)));
+        w.appendChild(el("div", "color:" + INK + ";font-weight:600;margin-bottom:4px", f.name));
+        w.appendChild(el("div", "margin-bottom:14px", text));
+        if (withDl) { var b = el("button", "border:1px solid " + LINE + ";background:transparent;color:inherit;padding:7px 14px;border-radius:8px;cursor:pointer;font:inherit", "⤓  Download"); b.onclick = function () { download(f); }; w.appendChild(b); }
+        body.appendChild(w);
+      }
+      var u = absUrl(f), kind = kindOf(f);
+      if (!u) { note("No link for this file. Try Show in chat.", false); return; }
+      if (kind === "other") { note([size(f.size), "No preview for this type."].filter(Boolean).join(" · "), true); return; }
+      note("Loading…", false);
+      function failed(e) {
+        if (!retried && e && (e.status === 403 || e.status === 400 || e.status === 404)) {
+          note("Refreshing the link…", false);
+          freshen(f).then(function (g) { if (viewer) preview(g, true); });
+        } else note("Couldn't preview this file.", true);
+      }
+      if (kind === "image" || kind === "audio" || kind === "video") {
+        var m = el(kind === "image" ? "img" : kind, "max-width:100%;max-height:100%;object-fit:contain");
+        if (kind !== "image") m.controls = true;
+        m.onload = function () { body.textContent = ""; body.appendChild(m); };
+        m.onerror = function () { fetchFile(u).then(function () { note("Couldn't preview this file.", true); }, failed); };
+        m.src = u;
+        if (kind !== "image") { body.textContent = ""; body.appendChild(m); }
         return;
       }
-      location.assign(f.msg ? "/project/" + id + "/" + f.msg : "/project/" + id);
+      fetchFile(u).then(function (b) {
+        if (!viewer) return;
+        if (kind === "pdf") {
+          viewerUrl = URL.createObjectURL(new Blob([b], { type: "application/pdf" }));
+          body.textContent = "";
+          body.appendChild(el("iframe", "width:100%;height:100%;border:0;background:#fff")).src = viewerUrl;
+          return;
+        }
+        var cut = b.size > 1500000;
+        return (cut ? b.slice(0, 1500000) : b).arrayBuffer().then(function (buf) {
+          if (!viewer) return;
+          var txt = new TextDecoder("utf-8").decode(buf);
+          body.textContent = ""; body.style.alignItems = "stretch"; body.style.justifyContent = "stretch";
+          var pre = el("pre", "margin:0;padding:14px 16px;width:100%;box-sizing:border-box;white-space:pre-wrap;word-break:break-word;" +
+            "font:12.5px/1.55 'Cascadia Code',Consolas,monospace;unicode-bidi:plaintext", txt + (cut ? "\n\n… (preview cut at 1.5 MB; download for the whole file)" : ""));
+          pre.dir = "auto";
+          body.appendChild(pre);
+        });
+      }, failed);
     }
     function download(f) {
       function viaPage(u) {
-        realFetch.call(window, u, { credentials: "include", cache: "no-store" })
-          .then(function (r) { if (!r.ok) throw new Error(); return r.blob(); })
+        fetchFile(u)
           .then(function (b) { var o = URL.createObjectURL(b), a = el("a", "display:none"); a.href = o; a.download = f.name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(o); a.remove(); }, 4000); })
-          .catch(function () { goTo(f); });
+          .catch(function () { banner("Couldn't download " + f.name + ".", 3000); });
       }
-      if (!f.url) { goTo(f); return; }
+      if (!f.url) { banner("No link for this file.", 2500); return; }
       var abs = new URL(f.url, location.href).href;
       if (/^https:/.test(abs) && new URL(abs).host !== location.host) {
         quiet(invoke("download_file", { url: abs }).then(function (ok) { if (!ok) viaPage(abs); }));
@@ -796,6 +914,7 @@
     window.__deskFilesSetting = function (on) { enabled = !!on; sync(); };
     window.addEventListener("keydown", function (e) {
       if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "F" || e.key === "f")) { e.preventDefault(); e.stopPropagation(); toggle(); }
+      else if (e.key === "Escape" && viewer) { e.preventDefault(); e.stopPropagation(); closeViewer(); }
       else if (e.key === "Escape" && open && panel && panel.contains(document.activeElement)) toggle(false);
     }, true);
     var lastPath = "";

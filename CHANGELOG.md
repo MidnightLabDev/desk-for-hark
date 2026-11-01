@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.4
+
+**New**
+- **Files panel preview**: clicking a file opens it in a viewer over the chat. Images, PDFs, code and text (Arabic and other scripts stay readable), audio and video show right there; other types show their name with a Download button. Esc or ✕ closes it. Expired links are refreshed automatically.
+- **⌕ Show in chat** on each file scrolls to the message it came in and outlines it, loading older messages for up to about 10 seconds if needed.
+
+**Fixed**
+- Clicking a file reloaded the page and left it blank (1.6.3). The panel never reloads the page now.
+
 ## 1.6.3
 
 **Fixed**
