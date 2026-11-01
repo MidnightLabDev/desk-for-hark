@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.2
+
+**New**
+- **Notifications for other chats and projects**: while the window is hidden or minimised, a reply in a chat or project that isn't the one open now also gives you a notification (when Hark moves it to the top of its sidebar). Click it to go straight there.
+
 ## 1.4.1
 
 **Fixed**

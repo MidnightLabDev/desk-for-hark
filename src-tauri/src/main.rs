@@ -1246,13 +1246,15 @@ struct Watch {
     checks: u64,
     notified: u64,
     last_len: usize,
+    /// The sidebar's chats and projects, top first, as last seen.
+    order: Vec<(String, String)>,
 }
 static WATCH: std::sync::OnceLock<std::sync::Mutex<Watch>> = std::sync::OnceLock::new();
 fn watch() -> &'static std::sync::Mutex<Watch> {
     WATCH.get_or_init(|| std::sync::Mutex::new(Watch::default()))
 }
 
-const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';return [location.pathname,t];})()";
+const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';var seen={},links=[];var as=document.querySelectorAll('a[href]');for(var i=0;i<as.length&&links.length<40;i++){var a=as[i];if(a.host!==location.host)continue;var p=a.pathname;if(p.split('/').filter(Boolean).length<2||seen[p])continue;var n=(a.innerText||'').trim().split('\\n')[0];if(!n)continue;seen[p]=1;links.push([p,n.slice(0,60)]);}return [location.pathname,t,links];})()";
 
 /// Lines of the page that weren't there before are the new reply. Sidebar
 /// chats moving around don't count, because their titles were already seen.
@@ -1268,9 +1270,34 @@ fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
             .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
             .filter(|l| !l.is_empty())
             .collect();
+        let order: Vec<(String, String)> = v
+            .get(2)
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| {
+                        let e = e.as_array()?;
+                        Some((e.first()?.as_str()?.to_string(), e.get(1)?.as_str()?.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut fire = None;
         if let Ok(mut st) = watch().lock() {
             st.checks += 1;
+            // Another chat or project jumping to the top of Hark's sidebar
+            // while the window is away means something new arrived there.
+            if st.primed && st.path == path {
+                if let (Some(top), Some(prev_top)) = (order.first(), st.order.first()) {
+                    let was_listed = st.order.iter().any(|(p, _)| p == &top.0);
+                    if top.0 != prev_top.0 && top.0 != path && was_listed {
+                        fire = Some((format!("New activity in {}", top.1), top.0.clone()));
+                    }
+                }
+            }
+            if !order.is_empty() {
+                st.order = order;
+            }
             st.last_len = text.chars().count();
             if !st.primed || st.path != path {
                 st.path = path;
@@ -1301,7 +1328,7 @@ fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
                     .filter(|l| now.contains(l) && l.chars().count() >= 12)
                     .collect();
                 let body = body.join(" ");
-                if body.chars().count() >= 20 {
+                if body.chars().count() >= 20 && fire.is_none() {
                     fire = Some((body, st.path.clone()));
                 }
             }
