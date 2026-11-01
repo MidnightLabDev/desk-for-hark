@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+**Fixed**
+- **Opening big files in Hark no longer crashes the app**: clicking a large file (like a long code file) shows Hark's normal preview again, and it only saves when you click Download. The page used to inspect every change Hark made to it, which froze on previews with thousands of lines; the app's own background check does that job now.
+
 ## 1.4.0
 
 **New**

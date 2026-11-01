@@ -58,7 +58,7 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 **Reliability**
 - A clean offline screen that reconnects by itself.
 - Automatic recovery if the page crashes or freezes.
-- **One-click downloads**: files you save from Hark go straight to your Downloads folder, with a notification when they're done. Prefer to choose the place each time? Turn on **Settings > Ask where to save downloads**. **Open Downloads folder** is in the tray. Files Hark gives you (code, text, documents, archives) are saved exactly as they are, so Arabic and other non-Latin text stays intact; images, PDFs, audio and video still open to view.
+- **One-click downloads**: files you save from Hark go straight to your Downloads folder, with a notification when they're done. Prefer to choose the place each time? Turn on **Settings > Ask where to save downloads**. **Open Downloads folder** is in the tray. Files Hark gives you (code, text, documents, archives) are saved exactly as they are, so Arabic and other non-Latin text stays intact; images, PDFs, audio and video still open to view. Clicking a file in a chat shows Hark's usual preview; it only saves when you click **Download**.
 - Drag files from Explorer straight onto the window to attach them.
 - `Ctrl+R`/`F5` reload, `Ctrl` `+`/`-`/`0` and `Ctrl`+wheel zoom.
 

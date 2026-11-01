@@ -134,75 +134,10 @@
     });
   } catch (e) {}
 
-  // ---- New-reply notifications -------------------------------------------
-  // Hark's web app doesn't always raise a browser notification (and web push
-  // can't reach an embedded WebView2), so the app watches the page itself:
-  // when new text appears and then stays quiet for a few seconds (a reply has
-  // finished streaming in), it tells the app. The page can't reliably tell
-  // whether the window is minimised (WebView2 can keep reporting focus), so
-  // the app decides: it only notifies when the window is hidden, minimised or
-  // in the background, and at most once every 15 seconds.
-  // A second check compares how much text the chat holds every few seconds,
-  // in case Hark updates the page in a way the first one misses.
-  var replyText = "", replyTimer = 0;
-  var SKIP = "script,style,noscript,textarea,input,nav,aside,[contenteditable=true],[role=navigation],[aria-hidden=true]";
-  function textOf(n) {
-    if (n.nodeType === 3) {
-      var p = n.parentElement;
-      return p && !p.closest(SKIP) ? n.nodeValue : "";
-    }
-    if (n.nodeType !== 1 || n.closest(SKIP) || n.id === "desk-offline") return "";
-    if (n.tagName === "CANVAS" || n.tagName === "SVG") return "";
-    return n.innerText || n.textContent || "";
-  }
-  function flushReply() {
-    replyTimer = 0;
-    var t = replyText.replace(/\s+/g, " ").trim();
-    replyText = "";
-    if (t.length < 20) return;
-    if (t.length > 160) t = "…" + t.slice(-160);
-    quiet(invoke("new_reply", { body: t }));
-  }
-  function startReplyWatch() {
-    if (!document.body) return setTimeout(startReplyWatch, 500);
-    new MutationObserver(function (list) {
-      var add = "";
-      list.forEach(function (m) {
-        if (m.type === "characterData") add += " " + textOf(m.target).slice(-200);
-        else m.addedNodes.forEach(function (n) { add += " " + textOf(n); });
-      });
-      if (add.replace(/\s+/g, "").length < 2) return;
-      replyText = (replyText + add).slice(-4000);
-      clearTimeout(replyTimer);
-      replyTimer = setTimeout(flushReply, 3000);
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
-    pollGrowth();
-  }
-  var lastLen = -1, grownAt = 0, grownBy = 0;
-  function chatLen() {
-    var m = document.querySelector("main") || document.body;
-    return (m.textContent || "").length;
-  }
-  function pollGrowth() {
-    var n = chatLen();
-    if (lastLen < 0 || location.pathname !== pollGrowth.path) {
-      // First look, or the user opened another chat: just take a reading.
-      pollGrowth.path = location.pathname; lastLen = n; grownBy = 0;
-    } else if (n > lastLen) {
-      grownBy += n - lastLen; lastLen = n; grownAt = Date.now();
-    } else {
-      lastLen = n;
-      if (grownBy >= 40 && Date.now() - grownAt >= 3000) {
-        grownBy = 0;
-        var m = document.querySelector("main") || document.body;
-        var t = (m.innerText || m.textContent || "").replace(/\s+/g, " ").trim();
-        quiet(invoke("new_reply", { body: t.length > 160 ? "…" + t.slice(-160) : t }));
-      }
-    }
-    setTimeout(pollGrowth, 2500);
-  }
-  // Give Hark a moment to render the first page before watching.
-  setTimeout(startReplyWatch, 4000);
+  // New-reply notifications are handled by the app itself (it reads the
+  // open chat while the window is away), so the page doesn't watch every
+  // change. Watching every change froze Hark on big file previews.
+
 
   // ---- Themes -----------------------------------------------------------
   // Hark's design tokens (CSS custom properties) are overridden with
