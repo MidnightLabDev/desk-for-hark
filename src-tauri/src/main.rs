@@ -250,6 +250,187 @@ fn is_local(webview: &Webview) -> bool {
         .unwrap_or(false)
 }
 
+/// Sign-in providers whose popups must stay WebView2's own (window.opener).
+const AUTH_HOSTS: &[&str] = &[
+    "accounts.google.com",
+    "accounts.youtube.com",
+    "appleid.apple.com",
+    "idmsa.apple.com",
+];
+
+/// File types a window can show well. Any other file Hark hands out
+/// (code, text, archives, documents) is saved instead of shown, because
+/// Hark's file storage doesn't say which text encoding a file uses and the
+/// page would guess wrong (Arabic and other non-Latin text came out garbled).
+const PREVIEW_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "ico", "pdf", "mp4", "webm", "mov",
+    "mp3", "wav", "ogg", "m4a",
+];
+
+/// A file link from Hark's file storage (e.g. hark-media-prod.s3…amazonaws.com).
+fn is_hark_file(url: &Url) -> bool {
+    let Some(host) = url.host_str() else { return false };
+    let host = host.to_ascii_lowercase();
+    let storage = host.ends_with(".amazonaws.com") || host.ends_with(".cloudfront.net") || host.contains("hark-media");
+    if !storage {
+        return false;
+    }
+    let last = url.path_segments().and_then(|s| s.last()).unwrap_or("");
+    let ext = Path::new(last)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    !ext.is_empty() && !PREVIEW_EXTS.contains(&ext.as_str())
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = |c: u8| (c as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn safe_file_name(name: &str) -> String {
+    let n: String = name
+        .chars()
+        .map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c })
+        .collect();
+    let n = n.trim().trim_matches('.').to_string();
+    if n.is_empty() { "download".into() } else { n }
+}
+
+/// File name from Content-Disposition, else the last part of the URL path.
+fn download_name(url: &Url, disposition: Option<&str>) -> String {
+    if let Some(d) = disposition {
+        for part in d.split(';') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("filename*=") {
+                let v = v.trim_matches('"');
+                let v = v.splitn(3, '\'').last().unwrap_or(v);
+                return safe_file_name(&percent_decode(v));
+            }
+        }
+        for part in d.split(';') {
+            if let Some(v) = part.trim().strip_prefix("filename=") {
+                return safe_file_name(v.trim_matches('"'));
+            }
+        }
+    }
+    let last = url.path_segments().and_then(|s| s.last()).unwrap_or("download");
+    safe_file_name(&percent_decode(last))
+}
+
+fn unique_file(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let p = Path::new(name);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| name.to_string());
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    (1..1000)
+        .map(|i| dir.join(format!("{stem} ({i}){ext}")))
+        .find(|c| !c.exists())
+        .unwrap_or(first)
+}
+
+/// Saves a Hark file link byte for byte (so the file keeps its own
+/// encoding), to Downloads or, with "Ask where to save" on, where the user picks.
+fn download_url(app: &AppHandle, url: &Url) {
+    let app = app.clone();
+    let url = url.clone();
+    std::thread::spawn(move || {
+        let resp = match ureq::get(url.as_str()).call() {
+            Ok(r) => r,
+            Err(_) => {
+                notify_text(&app, "Download failed", "Couldn't download that file from Hark.");
+                return;
+            }
+        };
+        let name = download_name(&url, resp.header("content-disposition"));
+        let target = if settings(&app).ask_before_saving {
+            let mut dlg = app.dialog().file().set_file_name(&name);
+            if let Ok(d) = app.path().download_dir() {
+                dlg = dlg.set_directory(d);
+            }
+            match dlg.blocking_save_file().and_then(|fp| fp.into_path().ok()) {
+                Some(p) => p,
+                None => return,
+            }
+        } else {
+            let dir = app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir());
+            unique_file(&dir, &name)
+        };
+        let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
+        let ok = fs::File::create(&target)
+            .and_then(|mut f| std::io::copy(&mut resp.into_reader(), &mut f).map(|_| ()))
+            .is_ok();
+        if ok {
+            notify_text(&app, "Saved to Downloads", &shown);
+        } else {
+            let _ = fs::remove_file(&target);
+            notify_text(&app, "Download failed", &shown);
+        }
+    });
+}
+
+static POPUP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Closes a popup a moment later (not from inside its own navigation callback).
+fn close_popup_later(app: &AppHandle, label: String) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.destroy();
+        }
+    });
+}
+
+/// Hark often opens a blank window first and then points it at a file. A
+/// window the app builds itself (sharing Hark's session and window.opener)
+/// lets the app see where it goes: Hark files are saved, outside links go
+/// to the browser, and the window closes.
+fn hark_popup(app: &AppHandle, url: &Url, features: tauri::webview::NewWindowFeatures) -> NewWindowResponse<Wry> {
+    let label = format!("popup-{}", POPUP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let nav_app = app.clone();
+    let nav_label = label.clone();
+    let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url.clone()))
+        .title("Desk for Hark")
+        .theme(Some(Theme::Dark))
+        .window_features(features)
+        .on_navigation(move |u| {
+            if is_hark_file(u) {
+                download_url(&nav_app, u);
+                close_popup_later(&nav_app, nav_label.clone());
+                false
+            } else if is_internal(&nav_app, u) {
+                true
+            } else {
+                open_in_browser(&nav_app, u.as_str());
+                close_popup_later(&nav_app, nav_label.clone());
+                false
+            }
+        })
+        .build();
+    match built {
+        Ok(window) => NewWindowResponse::Create { window },
+        Err(_) => NewWindowResponse::Allow,
+    }
+}
+
 fn open_in_browser(app: &AppHandle, url: &str) {
     let _ = app.opener().open_url(url, None::<&str>);
 }
@@ -1301,17 +1482,29 @@ fn main() {
                 .disable_drag_drop_handler()
                 .initialization_script(INJECT_JS)
                 .on_navigation(move |url| {
-                    if is_internal(&nav_handle, url) {
+                    if is_hark_file(url) {
+                        download_url(&nav_handle, url);
+                        false
+                    } else if is_internal(&nav_handle, url) {
                         true
                     } else {
                         open_in_browser(&nav_handle, url.as_str());
                         false
                     }
                 })
-                .on_new_window(move |url, _features| {
-                    if is_internal(&popup_handle, &url) {
+                .on_new_window(move |url, features| {
+                    let auth = url
+                        .host_str()
+                        .map(|h| AUTH_HOSTS.iter().any(|p| host_matches(h, p)))
+                        .unwrap_or(false);
+                    if is_hark_file(&url) {
+                        download_url(&popup_handle, &url);
+                        NewWindowResponse::Deny
+                    } else if auth {
                         // Sign-in popups keep window.opener so OAuth can finish.
                         NewWindowResponse::Allow
+                    } else if is_internal(&popup_handle, &url) {
+                        hark_popup(&popup_handle, &url, features)
                     } else {
                         open_in_browser(&popup_handle, url.as_str());
                         NewWindowResponse::Deny

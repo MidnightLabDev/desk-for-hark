@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.6
+
+**Fixed**
+- **Downloading files from Hark** (for example a .tsx or .txt file) opened a page showing the file instead of saving it. They're now saved straight to Downloads (or where you choose, with **Ask where to save downloads** on), with a notification.
+- **Arabic and other non-Latin text in those files looked garbled**: the page guessed the wrong text encoding. Files are now saved byte for byte, so they open correctly in your editor.
+- Other windows Hark opens now close themselves when they hand off to a download or to your browser.
+
 ## 1.3.5
 
 **Fixed**
