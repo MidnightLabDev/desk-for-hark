@@ -322,6 +322,7 @@
 
   function applyTheme(p) {
     currentPayload = p;
+    if (window.__deskFilesSetting) window.__deskFilesSetting(p.filesPanel !== false);
     var out = cssFor(p);
     var el = document.getElementById("desk-theme");
     if (!el) {
@@ -577,6 +578,211 @@
     banner("Back online. Reloading…", 1500);
     setTimeout(function () { location.reload(); }, 800);
   });
+
+  // ---- Project files panel ----------------------------------------------
+  // A list of every file in the open project's chat: what you uploaded and
+  // what Hark sent you. Hark's web app has no list of a project's whole
+  // workspace, so it reads the project's message history (the same request
+  // Hark's own page makes) and collects the files in it. Hidden until
+  // opened with Ctrl+Shift+F, the tab on the right edge, or the tray.
+  (function () {
+    var KEY = "deskForHark.filesOpen.v1";
+    var enabled = true, open = false, pid = null, files = {}, loading = false, err = "";
+    var panel, tab, listEl, searchEl, statusEl, pollTimer = null, loadedFor = null;
+    try { open = localStorage.getItem(KEY) === "1"; } catch (e) {}
+    var realFetch = window.__deskRealFetch || window.fetch;
+
+    function projectId() { return (location.pathname.match(/^\/project\/([^/?#]+)/) || [])[1] || null; }
+    function hdr() {
+      var m = document.querySelector('meta[name="hark-locale"]');
+      return m && m.content ? { "X-Hark-Locale": m.content } : {};
+    }
+    function base(p) { p = String(p || ""); return p.split("?")[0].split("/").filter(Boolean).pop() || ""; }
+    function stamp(m) {
+      var t = m && (m.createdAt || m.created_at || m.timestamp);
+      if (t == null) return 0;
+      var n = typeof t === "number" ? t : Date.parse(t);
+      if (typeof t === "number" && t < 1e12) n = t * 1000;
+      return isNaN(n) ? 0 : n;
+    }
+    // Walks one message and picks up every object that looks like a file.
+    function collect(m) {
+      var mine = m.role === "user", when = stamp(m), seen = 0;
+      (function walk(o, depth) {
+        if (!o || typeof o !== "object" || depth > 8 || seen > 200) return;
+        if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) walk(o[i], depth + 1); return; }
+        var key = o.s3Key || o.s3_key;
+        var url = o.downloadUrl || o.download_url;
+        if (typeof key === "string" && key && (url || o.path || o.filename || o.name)) {
+          seen++;
+          var name = o.filename || o.name || base(o.path) || base(key);
+          if (!files[key] || files[key].when < when) {
+            files[key] = { key: key, name: String(name), url: url || "", mine: mine, when: when,
+              size: o.size || 0, msg: m.id, kind: o.contentType || o.content_type || o.media_type || "" };
+          }
+        }
+        for (var k in o) if (o[k] && typeof o[k] === "object") walk(o[k], depth + 1);
+      })(m, 0);
+    }
+    function page(id, before) {
+      var q = new URLSearchParams({ conversationId: id, v: "2" });
+      if (before) { q.set("before", before.id); q.set("beforeCreatedAt", String(before.createdAt != null ? before.createdAt : before.created_at)); }
+      return realFetch.call(window, "/api/messages/history?" + q.toString(), { credentials: "include", headers: hdr(), cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function (j) { return (j && (j.messages || j.items)) || (Array.isArray(j) ? j : []); });
+    }
+    function oldest(list) {
+      var o = null;
+      list.forEach(function (m) { if (m && m.id && (!o || stamp(m) < stamp(o))) o = m; });
+      return o;
+    }
+    // Reads up to 10 pages back the first time, then only the newest page.
+    function load(full) {
+      var id = projectId();
+      if (!id || loading) return;
+      if (id !== loadedFor) { files = {}; full = true; }
+      loading = true; err = ""; render();
+      var pages = 0, ids = {};
+      function step(before) {
+        return page(id, before).then(function (list) {
+          var fresh = list.filter(function (m) { return m && m.id && !ids[m.id]; });
+          fresh.forEach(function (m) { ids[m.id] = 1; collect(m); });
+          pages++;
+          if (full && fresh.length && pages < 10) return step(oldest(fresh));
+        });
+      }
+      step(null).then(function () { loadedFor = id; }, function (e) { err = "Couldn't read this project's files (" + (e && e.message || e) + ")."; })
+        .then(function () { loading = false; if (projectId() === id) render(); });
+    }
+
+    function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+    var INK = "var(--text-primary,var(--color-text-primary,#f2f2f2))";
+    var SUB = "var(--color-text-secondary,rgba(127,127,127,.95))";
+    var BG = "var(--regular-opaque-bg,var(--surface-secondary,var(--color-surface-secondary,#1c1c1e)))";
+    var LINE = "rgba(127,127,127,.22)";
+    function build() {
+      if (panel || !document.body) return;
+      panel = el("aside", "position:fixed;top:0;right:0;bottom:0;width:300px;max-width:85vw;z-index:2147483000;display:none;" +
+        "flex-direction:column;background:" + BG + ";color:" + INK + ";border-left:1px solid " + LINE + ";" +
+        "box-shadow:-8px 0 30px rgba(0,0,0,.18);font:13px 'Segoe UI Variable','Segoe UI',sans-serif");
+      panel.setAttribute("aria-label", "Project files");
+      var head = el("div", "display:flex;align-items:center;gap:8px;padding:14px 14px 8px");
+      head.appendChild(el("div", "flex:1;font-weight:600;font-size:14px", "Files"));
+      var refresh = el("button", btnCss(), "↻"); refresh.title = "Refresh"; refresh.onclick = function () { load(true); };
+      var close = el("button", btnCss(), "✕"); close.title = "Close (Ctrl+Shift+F)"; close.onclick = function () { toggle(false); };
+      head.appendChild(refresh); head.appendChild(close);
+      searchEl = el("input", "margin:0 14px 8px;padding:7px 10px;border-radius:8px;border:1px solid " + LINE + ";background:transparent;color:inherit;font:inherit;outline:none");
+      searchEl.placeholder = "Search files"; searchEl.oninput = render;
+      statusEl = el("div", "padding:0 14px 6px;color:" + SUB + ";font-size:12px");
+      listEl = el("div", "flex:1;overflow:auto;padding:0 6px 14px");
+      panel.appendChild(head); panel.appendChild(searchEl); panel.appendChild(statusEl); panel.appendChild(listEl);
+      tab = el("button", "position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:2147482999;display:none;" +
+        "writing-mode:vertical-rl;padding:12px 5px;border:1px solid " + LINE + ";border-right:0;border-radius:8px 0 0 8px;" +
+        "background:" + BG + ";color:" + SUB + ";font:600 11px 'Segoe UI',sans-serif;letter-spacing:.06em;cursor:pointer;opacity:.75", "FILES");
+      tab.title = "Project files (Ctrl+Shift+F)";
+      tab.onclick = function () { toggle(true); };
+      document.body.appendChild(panel); document.body.appendChild(tab);
+    }
+    function btnCss() { return "border:0;background:transparent;color:inherit;font:14px 'Segoe UI',sans-serif;cursor:pointer;padding:4px 6px;border-radius:6px;opacity:.7"; }
+    function icon(f) {
+      var n = f.name.toLowerCase(), k = f.kind;
+      if (/^image\//.test(k) || /\.(png|jpe?g|gif|webp|svg|bmp|heic)$/.test(n)) return "🖼";
+      if (/pdf/.test(k) || /\.pdf$/.test(n)) return "📕";
+      if (/^(audio|video)\//.test(k) || /\.(mp3|wav|m4a|mp4|mov|webm)$/.test(n)) return "🎞";
+      if (/\.(zip|rar|7z|tar|gz)$/.test(n)) return "🗜";
+      if (/\.(xlsx?|csv)$/.test(n)) return "📊";
+      if (/\.(js|ts|tsx|jsx|py|rs|go|java|c|cpp|cs|html|css|json|sh|sql|ya?ml|toml)$/.test(n)) return "⌨";
+      return "📄";
+    }
+    function when(t) {
+      if (!t) return "";
+      var d = new Date(t), now = new Date();
+      return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString([], { day: "numeric", month: "short" });
+    }
+    function size(b) { b = +b || 0; return !b ? "" : b < 1024 ? b + " B" : b < 1048576 ? Math.round(b / 1024) + " KB" : (b / 1048576).toFixed(1) + " MB"; }
+    function row(f) {
+      var r = el("div", "display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer");
+      r.onmouseenter = function () { r.style.background = "rgba(127,127,127,.12)"; };
+      r.onmouseleave = function () { r.style.background = "transparent"; };
+      r.title = f.name + " · open in chat";
+      r.appendChild(el("span", "width:18px;text-align:center", icon(f)));
+      var mid = el("div", "flex:1;min-width:0");
+      mid.appendChild(el("div", "white-space:nowrap;overflow:hidden;text-overflow:ellipsis", f.name));
+      mid.appendChild(el("div", "color:" + SUB + ";font-size:11px", [when(f.when), size(f.size)].filter(Boolean).join(" · ")));
+      r.appendChild(mid);
+      var copy = el("button", btnCss() + ";font-size:12px", "⧉"); copy.title = "Copy name";
+      copy.onclick = function (e) { e.stopPropagation(); try { navigator.clipboard.writeText(f.name); copy.textContent = "✓"; setTimeout(function () { copy.textContent = "⧉"; }, 1200); } catch (x) {} };
+      var dl = el("button", btnCss(), "⤓"); dl.title = "Download to Downloads";
+      dl.onclick = function (e) { e.stopPropagation(); download(f); };
+      r.appendChild(copy); r.appendChild(dl);
+      r.onclick = function () { goTo(f); };
+      return r;
+    }
+    function render() {
+      if (!panel) return;
+      var q = (searchEl.value || "").trim().toLowerCase();
+      var all = Object.keys(files).map(function (k) { return files[k]; })
+        .filter(function (f) { return !q || f.name.toLowerCase().indexOf(q) >= 0; })
+        .sort(function (a, b) { return b.when - a.when; });
+      listEl.textContent = "";
+      [["Sent by Hark", false], ["Uploaded by you", true]].forEach(function (g) {
+        var part = all.filter(function (f) { return f.mine === g[1]; });
+        if (!part.length) return;
+        listEl.appendChild(el("div", "padding:10px 8px 4px;color:" + SUB + ";font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em", g[0] + " · " + part.length));
+        part.forEach(function (f) { listEl.appendChild(row(f)); });
+      });
+      statusEl.textContent = err || (loading ? "Reading this project's files…" : (all.length ? "" : (q ? "No files match." : "No files in this project's chat yet.")));
+    }
+    function goTo(f) {
+      var id = projectId(); if (!id) return;
+      var path = f.msg ? "/project/" + id + "/" + f.msg : "/project/" + id;
+      if (location.pathname === path) return;
+      try { history.pushState(history.state, "", path); window.dispatchEvent(new PopStateEvent("popstate", { state: history.state })); }
+      catch (e) { location.assign(path); }
+    }
+    function download(f) {
+      function viaPage(u) {
+        realFetch.call(window, u, { credentials: "include", cache: "no-store" })
+          .then(function (r) { if (!r.ok) throw new Error(); return r.blob(); })
+          .then(function (b) { var o = URL.createObjectURL(b), a = el("a", "display:none"); a.href = o; a.download = f.name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(o); a.remove(); }, 4000); })
+          .catch(function () { goTo(f); });
+      }
+      if (!f.url) { goTo(f); return; }
+      var abs = new URL(f.url, location.href).href;
+      if (/^https:/.test(abs) && new URL(abs).host !== location.host) {
+        quiet(invoke("download_file", { url: abs }).then(function (ok) { if (!ok) viaPage(abs); }));
+      } else viaPage(abs);
+    }
+    function sync() {
+      var id = projectId();
+      build();
+      if (!panel) return;
+      var on = enabled && !!id;
+      panel.style.display = on && open ? "flex" : "none";
+      tab.style.display = on && !open ? "block" : "none";
+      if (on && open && id !== pid) { pid = id; load(true); }
+      if (!on || !open) pid = on ? pid : null;
+      clearInterval(pollTimer); pollTimer = null;
+      if (on && open) pollTimer = setInterval(function () { if (!document.hidden) load(false); }, 20000);
+    }
+    function toggle(want) {
+      open = typeof want === "boolean" ? want : !open;
+      try { localStorage.setItem(KEY, open ? "1" : "0"); } catch (e) {}
+      if (open && !projectId()) { banner("Open a project to see its files.", 2500); open = false; }
+      if (!open) pid = null;
+      sync();
+      if (open && searchEl) searchEl.focus();
+    }
+    window.__deskToggleFiles = toggle;
+    window.__deskFilesSetting = function (on) { enabled = !!on; sync(); };
+    window.addEventListener("keydown", function (e) {
+      if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "F" || e.key === "f")) { e.preventDefault(); e.stopPropagation(); toggle(); }
+      else if (e.key === "Escape" && open && panel && panel.contains(document.activeElement)) toggle(false);
+    }, true);
+    var lastPath = "";
+    setInterval(function () { if (location.pathname !== lastPath) { lastPath = location.pathname; sync(); } }, 800);
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", sync); else sync();
+  })();
 
   // Project groups were removed in 1.3.0; clear what older versions saved.
   try { localStorage.removeItem("deskForHark.projectGroups.v1"); } catch (e) {}

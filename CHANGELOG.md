@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+
+**New**
+- **Project files panel.** Press **Ctrl+Shift+F** in a project (or use the **FILES** tab on the right edge, or **Tray > Project files**) to see every file in that project's chat: **Sent by Hark** and **Uploaded by you**, newest first, with a search box.
+- Click a file to jump to the message it came in, where Hark's preview is. **⤓** saves it straight to Downloads; **⧉** copies its name.
+- It stays up to date while open and remembers whether you left it open. Turn it off in **Settings > Files panel**.
+- Files are read from your own signed-in Hark session and nothing is stored or sent anywhere. Files Hark made but never sent in chat aren't listed, since Hark's web app has no list of them.
+
 ## 1.5.1
 
 **Improved**

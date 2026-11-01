@@ -127,6 +127,8 @@ struct Settings {
     /// Animated effect for event and mood themes (snow, fireworks…).
     /// Kept as "snow" in settings.json for older installs.
     snow: bool,
+    /// The project Files panel on the right (opened with Ctrl+Shift+F).
+    files_panel: bool,
 }
 
 impl Default for Settings {
@@ -158,6 +160,7 @@ impl Default for Settings {
             ask_before_saving: false,
             restore_clipboard: true,
             snow: true,
+            files_panel: true,
         }
     }
 }
@@ -266,6 +269,13 @@ const PREVIEW_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "ico", "pdf", "mp4", "webm", "mov",
     "mp3", "wav", "ogg", "m4a",
 ];
+
+/// Hark's file storage hosts (any file type).
+fn is_storage_host(url: &Url) -> bool {
+    let Some(host) = url.host_str() else { return false };
+    let host = host.to_ascii_lowercase();
+    host.ends_with(".amazonaws.com") || host.ends_with(".cloudfront.net") || host.contains("hark-media")
+}
 
 /// A file link from Hark's file storage (e.g. hark-media-prod.s3…amazonaws.com).
 fn is_hark_file(url: &Url) -> bool {
@@ -675,6 +685,7 @@ fn theme_payload(app: &AppHandle) -> serde_json::Value {
         "scheduleLight": s.schedule_light,
         "voiceSelector": s.voice_button_selector,
         "snow": s.snow,
+        "filesPanel": s.files_panel,
     })
 }
 
@@ -1654,6 +1665,19 @@ fn open_external(app: AppHandle, url: String) {
     }
 }
 
+/// Saves a file from the Files panel. Only Hark's own file storage is
+/// fetched here; anything else is ignored.
+#[tauri::command]
+fn download_file(app: AppHandle, url: String) -> bool {
+    match Url::parse(&url) {
+        Ok(u) if u.scheme() == "https" && is_storage_host(&u) => {
+            download_url(&app, &u);
+            true
+        }
+        _ => false,
+    }
+}
+
 #[tauri::command]
 fn get_theme(app: AppHandle) -> serde_json::Value {
     theme_payload(&app)
@@ -1871,6 +1895,7 @@ fn main() {
             zoom,
             open_external,
             get_theme,
+            download_file,
             title_bar,
             quick_submit,
             quick_hide,
@@ -2087,6 +2112,7 @@ fn main() {
             let compact = CheckMenuItem::with_id(app, "compact", "Compact mode", true, false, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start at login", true, autostart_on, None::<&str>)?;
             let sendto = CheckMenuItem::with_id(app, "sendto", "Add to \"Send to\" menu", true, sendto_on, None::<&str>)?;
+            let files_item = MenuItem::with_id(app, "files_panel", "Project files", true, None::<&str>)?;
             let downloads = MenuItem::with_id(app, "downloads", "Open Downloads folder", true, None::<&str>)?;
 
             let hk_toggle = MenuItem::with_id(app, "hk1", label(Action::Toggle), false, None::<&str>)?;
@@ -2119,6 +2145,7 @@ fn main() {
                     &PredefinedMenuItem::separator(app)?,
                     &autostart,
                     &sendto,
+                    &files_item,
                     &downloads,
                     &hotkey_menu,
                     &settings_item,
@@ -2198,6 +2225,10 @@ fn main() {
                             let has = sendto_link(app).map(|p| p.exists()).unwrap_or(false);
                             let now = set_sendto(app, !has);
                             let _ = sendto_item.set_checked(now);
+                        }
+                        "files_panel" => {
+                            show_main(app);
+                            eval_main(app, "window.__deskToggleFiles&&window.__deskToggleFiles(true);");
                         }
                         "downloads" => {
                             if let Ok(d) = app.path().download_dir() {
