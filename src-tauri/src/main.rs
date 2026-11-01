@@ -1217,14 +1217,41 @@ fn open_chat(app: &AppHandle, path: &str) {
     if path.is_empty() || !path.starts_with('/') {
         return;
     }
-    if let Some(w) = main_window(app) {
-        let here = w.url().ok();
-        let same = here.as_ref().map(|u| u.path() == path).unwrap_or(false);
-        if !same {
-            if let Ok(u) = Url::parse(&format!("https://app.hark.com{path}")) {
-                let _ = w.navigate(u);
-            }
-        }
+    let Some(w) = main_window(app) else { return };
+    let here = w.url().ok();
+    let same = here.as_ref().map(|u| u.path() == path).unwrap_or(false);
+    if same {
+        return;
+    }
+    // Switch inside Hark, the way clicking the project in its sidebar does,
+    // instead of reloading the whole app. Only if that doesn't take within
+    // two seconds is the page loaded the slow way.
+    #[cfg(windows)]
+    {
+        let lit = serde_json::to_string(path).unwrap_or_default();
+        let js = format!(
+            "(function(p){{if(location.pathname===p)return 1;var as=document.querySelectorAll('a[href]');for(var i=0;i<as.length;i++){{var a=as[i];if(a.host===location.host&&a.pathname===p){{a.click();return 1;}}}}try{{history.pushState({{}},'',p);dispatchEvent(new PopStateEvent('popstate',{{state:{{}}}}));}}catch(e){{}}return 1;}})({lit})"
+        );
+        win::eval_page(&w, js, |_| {});
+        let check = format!("location.pathname==={lit}&&!!document.querySelector('main')");
+        let w2 = w.clone();
+        let target = path.to_string();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(2000));
+            let w3 = w2.clone();
+            win::eval_page(&w2, check, move |res| {
+                if res.trim() != "true" {
+                    if let Ok(u) = Url::parse(&format!("https://app.hark.com{target}")) {
+                        let _ = w3.navigate(u);
+                    }
+                }
+            });
+        });
+        return;
+    }
+    #[allow(unreachable_code)]
+    if let Ok(u) = Url::parse(&format!("https://app.hark.com{path}")) {
+        let _ = w.navigate(u);
     }
 }
 

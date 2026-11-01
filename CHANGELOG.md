@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1
+
+**Improved**
+- **Clicking a notification is instant**: it switches to that chat or project inside Hark, like clicking it in the sidebar, instead of reloading the whole app. If that ever doesn't work, it falls back to loading the page as before.
+
 ## 1.5.0
 
 **Changed**
