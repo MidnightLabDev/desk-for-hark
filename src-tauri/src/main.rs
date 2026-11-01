@@ -1083,6 +1083,18 @@ fn get_settings(app: AppHandle, webview: Webview) -> Option<serde_json::Value> {
     Some(v)
 }
 
+/// Settings' Close button. `window.close()` from the page only tears down the
+/// web view in WebView2, leaving an empty white window, so the app closes it.
+#[tauri::command]
+fn close_settings(app: AppHandle, webview: Webview) {
+    if !is_local(&webview) {
+        return;
+    }
+    if let Some(w) = app.get_webview_window(SETTINGS_WIN) {
+        let _ = w.destroy();
+    }
+}
+
 #[tauri::command]
 fn save_settings(app: AppHandle, webview: Webview, settings: serde_json::Value, restart: bool) -> bool {
     if !is_local(&webview) {
@@ -1230,6 +1242,7 @@ fn main() {
             quick_hide,
             get_settings,
             save_settings,
+            close_settings,
             open_theme_css
         ])
         .setup(move |app| {

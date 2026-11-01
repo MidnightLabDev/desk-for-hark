@@ -37,6 +37,7 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - Starts hidden in the tray when launched at login.
 - Themed or **Mica** title bar, and Windows snap layouts.
 - Single instance, remembers its size and position, closes to the tray.
+- **Settings** (tray > Settings…): **Save**, **Save and restart**, or **Close** to leave without saving.
 
 **Themes**
 - **Everyday**: **Hark** (default), **Midnight** (true black), **Teal** and **High contrast**.

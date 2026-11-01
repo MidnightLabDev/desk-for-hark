@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.4
+
+**Fixed**
+- **Settings > Close** left an empty white window open. It now closes the Settings window properly.
+
 ## 1.3.3
 
 **Fixed**

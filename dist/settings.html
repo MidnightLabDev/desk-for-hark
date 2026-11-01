@@ -146,7 +146,7 @@ async function save(restart) {
 $("theme").addEventListener("change", themeRows);
 $("save").onclick = () => save(false);
 $("saveRestart").onclick = () => save(true);
-$("cancel").onclick = () => window.close();
+$("cancel").onclick = () => invoke("close_settings");
 $("editCss").onclick = () => invoke("open_theme_css");
 $("src").onclick = e => { e.preventDefault(); invoke("open_external", { url: "https://github.com/MidnightLabDev/desk-for-hark" }); };
 
