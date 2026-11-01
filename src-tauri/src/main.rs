@@ -1665,12 +1665,50 @@ fn open_external(app: AppHandle, url: String) {
     }
 }
 
-/// Saves a file from the Files panel. Only Hark's own file storage is
-/// fetched here; anything else is ignored.
+/// Hosts the app itself may fetch files from: Hark's file storage and
+/// Hark's own domains.
+fn is_fetchable_host(url: &Url) -> bool {
+    if url.scheme() != "https" {
+        return false;
+    }
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    is_storage_host(url) || host == "hark.com" || host.ends_with(".hark.com")
+}
+
+/// Reads a file for the Files panel's viewer when the page can't (the
+/// page is bound by browser cross-site rules; the app isn't). Returns the
+/// bytes as base64, or the HTTP status / error.
+#[tauri::command]
+async fn fetch_file(url: String) -> serde_json::Value {
+    let Ok(u) = Url::parse(&url) else { return json!({"ok": false, "error": "bad address"}) };
+    if !is_fetchable_host(&u) {
+        return json!({"ok": false, "error": "not a Hark address"});
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        match ureq::get(u.as_str()).call() {
+            Ok(resp) => {
+                let ty = resp.header("content-type").unwrap_or("application/octet-stream").to_string();
+                let mut buf = Vec::new();
+                use std::io::Read;
+                match resp.into_reader().take(80 * 1024 * 1024).read_to_end(&mut buf) {
+                    Ok(_) => json!({"ok": true, "type": ty, "data": B64.encode(&buf)}),
+                    Err(e) => json!({"ok": false, "error": format!("read failed: {e}")}),
+                }
+            }
+            Err(ureq::Error::Status(code, _)) => json!({"ok": false, "status": code}),
+            Err(e) => json!({"ok": false, "error": format!("network: {}", e.kind())}),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| json!({"ok": false, "error": "internal"}))
+}
+
+/// Saves a file from the Files panel. Only Hark's own file storage and
+/// domains are fetched here; anything else is ignored.
 #[tauri::command]
 fn download_file(app: AppHandle, url: String) -> bool {
     match Url::parse(&url) {
-        Ok(u) if u.scheme() == "https" && is_storage_host(&u) => {
+        Ok(u) if is_fetchable_host(&u) => {
             download_url(&app, &u);
             true
         }
@@ -1896,6 +1934,7 @@ fn main() {
             open_external,
             get_theme,
             download_file,
+            fetch_file,
             title_bar,
             quick_submit,
             quick_hide,

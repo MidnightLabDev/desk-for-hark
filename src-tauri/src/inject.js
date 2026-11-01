@@ -802,10 +802,37 @@
       if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
     }
     function absUrl(f) { return f.url ? new URL(f.url, location.href).href : ""; }
+    // Reads a file. First the same plain request Hark's own preview makes;
+    // if the page can't (blocked or refused), the app fetches it itself,
+    // outside the page, for Hark's own hosts and file storage. Each attempt
+    // is noted so a failure can say why.
+    function safeAddr(u) { try { var x = new URL(u); return x.host + x.pathname; } catch (e) { return String(u).split("?")[0]; } }
+    function b64Blob(b64, type) {
+      var bin = atob(b64), n = bin.length, a = new Uint8Array(n);
+      for (var i = 0; i < n; i++) a[i] = bin.charCodeAt(i);
+      return new Blob([a], { type: type || "application/octet-stream" });
+    }
     function fetchFile(u) {
-      var cross = new URL(u).host !== location.host;
-      return realFetch.call(window, u, { credentials: cross ? "omit" : "include", cache: "no-store" })
-        .then(function (r) { if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; } return r.blob(); });
+      var tried = [];
+      function fail(status) { var e = new Error(tried.join("; ")); e.status = status; e.tried = tried; e.addr = safeAddr(u); throw e; }
+      var pageStatus = 0;
+      var opts = isStorage(u) ? { cache: "no-store" } : {};
+      return realFetch.call(window, u, opts).then(function (r) {
+        if (r.ok) return r.blob();
+        pageStatus = r.status; tried.push("page: HTTP " + r.status); throw 0;
+      }).catch(function (e) {
+        if (e !== 0) tried.push("page: " + (e && e.name === "TypeError" ? "blocked by the browser" : (e && e.message) || "error"));
+        if (!/^https:/.test(u)) fail(pageStatus);
+        return invoke("fetch_file", { url: u }).then(function (r) {
+          if (r && r.ok) return b64Blob(r.data, r.type);
+          tried.push("app: " + (r && r.status ? "HTTP " + r.status : (r && r.error) || "failed"));
+          fail((r && r.status) || pageStatus);
+        }, function (x) {
+          if (x && x.tried) throw x;
+          tried.push("app: " + ((x && x.message) || String(x || "unavailable")));
+          fail(pageStatus);
+        });
+      });
     }
     // Links from Hark expire; read the history again for a fresh one.
     function freshen(f) {
@@ -830,13 +857,23 @@
       head.appendChild(chat); head.appendChild(dl); head.appendChild(x);
       var body = el("div", "flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center");
       box.appendChild(head); box.appendChild(body); viewer.appendChild(box); document.body.appendChild(viewer);
-      function note(text, withDl) {
+      function note(text, withDl, err) {
         body.textContent = "";
         var w = el("div", "text-align:center;color:" + SUB + ";padding:30px");
         w.appendChild(el("div", "font-size:34px;margin-bottom:10px", icon(f)));
         w.appendChild(el("div", "color:" + INK + ";font-weight:600;margin-bottom:4px", f.name));
         w.appendChild(el("div", "margin-bottom:14px", text));
-        if (withDl) { var b = el("button", "border:1px solid " + LINE + ";background:transparent;color:inherit;padding:7px 14px;border-radius:8px;cursor:pointer;font:inherit", "⤓  Download"); b.onclick = function () { download(f); }; w.appendChild(b); }
+        var bcss = "border:1px solid " + LINE + ";background:transparent;color:inherit;padding:7px 14px;border-radius:8px;cursor:pointer;font:inherit;margin:0 4px";
+        if (withDl) { var b = el("button", bcss, "⤓  Download"); b.onclick = function () { download(f); }; w.appendChild(b); }
+        if (err) {
+          w.insertBefore(el("div", "margin:-8px 0 14px;font-size:12px;opacity:.85", (err.tried || [String(err.message || err)]).join(" · ")), w.lastChild && withDl ? w.lastChild : null);
+          var c = el("button", bcss, "⧉  Copy details");
+          c.onclick = function () {
+            var d = { file: f.name, type: f.kind || "", kind: kindOf(f), from: f.from || "", address: err.addr || safeAddr(absUrl(f)), tried: err.tried || [String(err.message || err)] };
+            try { navigator.clipboard.writeText(JSON.stringify(d, null, 2)); c.textContent = "✓  Copied"; } catch (x) {}
+          };
+          w.appendChild(c);
+        }
         body.appendChild(w);
       }
       var u = absUrl(f), kind = kindOf(f);
@@ -847,13 +884,23 @@
         if (!retried && e && (e.status === 403 || e.status === 400 || e.status === 404)) {
           note("Refreshing the link…", false);
           freshen(f).then(function (g) { if (viewer) preview(g, true); });
-        } else note("Couldn't preview this file.", true);
+        } else note("Couldn't preview this file.", true, e);
       }
       if (kind === "image" || kind === "audio" || kind === "video") {
         var m = el(kind === "image" ? "img" : kind, "max-width:100%;max-height:100%;object-fit:contain");
         if (kind !== "image") m.controls = true;
         m.onload = function () { body.textContent = ""; body.appendChild(m); };
-        m.onerror = function () { fetchFile(u).then(function () { note("Couldn't preview this file.", true); }, failed); };
+        var viaBlob = false;
+        m.onerror = function () {
+          if (viaBlob) { note("Couldn't preview this file.", true, { tried: ["the file loaded but couldn't be shown"] }); return; }
+          viaBlob = true;
+          fetchFile(u).then(function (b) {
+            if (!viewer) return;
+            viewerUrl = URL.createObjectURL(b);
+            m.src = viewerUrl;
+            if (kind !== "image") { body.textContent = ""; body.appendChild(m); }
+          }, failed);
+        };
         m.src = u;
         if (kind !== "image") { body.textContent = ""; body.appendChild(m); }
         return;
@@ -882,12 +929,12 @@
       function viaPage(u) {
         fetchFile(u)
           .then(function (b) { var o = URL.createObjectURL(b), a = el("a", "display:none"); a.href = o; a.download = f.name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(o); a.remove(); }, 4000); })
-          .catch(function () { banner("Couldn't download " + f.name + ".", 3000); });
+          .catch(function (e) { banner("Couldn't download " + f.name + ". " + ((e && e.tried) ? e.tried.join(" · ") : ""), 5000); });
       }
       if (!f.url) { banner("No link for this file.", 2500); return; }
       var abs = new URL(f.url, location.href).href;
       if (/^https:/.test(abs) && new URL(abs).host !== location.host) {
-        quiet(invoke("download_file", { url: abs }).then(function (ok) { if (!ok) viaPage(abs); }));
+        invoke("download_file", { url: abs }).then(function (ok) { if (!ok) viaPage(abs); }, function () { viaPage(abs); });
       } else viaPage(abs);
     }
     function sync() {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.5
+
+**Fixed**
+- **Files panel**: previews and downloads failed with "Couldn't preview this file" / "Couldn't download". Files are now read with the same request Hark's own preview uses, and when the page can't read one, the app fetches it directly (Hark's own domains and file storage only).
+- Downloads from the panel go through the app for Hark's domains too, straight to Downloads.
+
+**New**
+- When a file still can't be shown, the viewer says why (for example "HTTP 403" or "blocked by the browser") and has a **Copy details** button with the file's address minus its private tokens.
+
 ## 1.6.4
 
 **New**
