@@ -1230,13 +1230,17 @@ fn open_chat(app: &AppHandle, path: &str) {
 
 /// A Windows notification that opens the chat it's about when clicked.
 fn notify_reply(app: &AppHandle, body: &str, path: Option<String>) {
+    notify_reply_titled(app, "New message in Hark", body, path);
+}
+
+fn notify_reply_titled(app: &AppHandle, title: &str, body: &str, path: Option<String>) {
     #[cfg(windows)]
     {
         use tauri_winrt_notification::Toast;
         let id = app.config().identifier.clone();
         let handle = app.clone();
         let shown = Toast::new(&id)
-            .title("New message in Hark")
+            .title(title)
             .text1(body)
             .on_activated(move |_action| {
                 open_chat(&handle, path.as_deref().unwrap_or(""));
@@ -1249,7 +1253,7 @@ fn notify_reply(app: &AppHandle, body: &str, path: Option<String>) {
     }
     #[cfg(not(windows))]
     let _ = &path;
-    notify_text(app, "New message in Hark", body);
+    notify_text(app, title, body);
 }
 
 fn reply_arrived(app: &AppHandle, body: &str, path: Option<String>) {
@@ -1280,15 +1284,15 @@ struct Watch {
     checks: u64,
     notified: u64,
     last_len: usize,
-    /// The sidebar's chats and projects, top first, as last seen.
-    order: Vec<(String, String)>,
+    /// The open chat's newest reply text, kept for the status notification.
+    last_reply: Option<(String, String, Instant)>,
 }
 static WATCH: std::sync::OnceLock<std::sync::Mutex<Watch>> = std::sync::OnceLock::new();
 fn watch() -> &'static std::sync::Mutex<Watch> {
     WATCH.get_or_init(|| std::sync::Mutex::new(Watch::default()))
 }
 
-const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';var seen={},links=[];var as=document.querySelectorAll('a[href]');for(var i=0;i<as.length&&links.length<40;i++){var a=as[i];if(a.host!==location.host)continue;var p=a.pathname;if(p.split('/').filter(Boolean).length<2||seen[p])continue;var n=(a.innerText||'').trim().split('\\n')[0];if(!n)continue;seen[p]=1;links.push([p,n.slice(0,60)]);}return [location.pathname,t,links];})()";
+const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||document.body;var t=m?(m.innerText||m.textContent||''):'';return [location.pathname,t];})()";
 
 /// Lines of the page that weren't there before are the new reply. Sidebar
 /// chats moving around don't count, because their titles were already seen.
@@ -1296,6 +1300,7 @@ const WATCH_JS: &str = "(function(){var m=document.querySelector('main')||docume
 fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
     let app = app.clone();
     win::eval_page(w, WATCH_JS, move |res| {
+        let healthy = status_healthy();
         let Ok(serde_json::Value::Array(v)) = serde_json::from_str::<serde_json::Value>(&res) else { return };
         let path = v.first().and_then(|x| x.as_str()).unwrap_or("").to_string();
         let text = v.get(1).and_then(|x| x.as_str()).unwrap_or("");
@@ -1304,34 +1309,9 @@ fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
             .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
             .filter(|l| !l.is_empty())
             .collect();
-        let order: Vec<(String, String)> = v
-            .get(2)
-            .and_then(|x| x.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|e| {
-                        let e = e.as_array()?;
-                        Some((e.first()?.as_str()?.to_string(), e.get(1)?.as_str()?.to_string()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         let mut fire = None;
         if let Ok(mut st) = watch().lock() {
             st.checks += 1;
-            // Another chat or project jumping to the top of Hark's sidebar
-            // while the window is away means something new arrived there.
-            if st.primed && st.path == path {
-                if let (Some(top), Some(prev_top)) = (order.first(), st.order.first()) {
-                    let was_listed = st.order.iter().any(|(p, _)| p == &top.0);
-                    if top.0 != prev_top.0 && top.0 != path && was_listed {
-                        fire = Some((format!("New activity in {}", top.1), top.0.clone()));
-                    }
-                }
-            }
-            if !order.is_empty() {
-                st.order = order;
-            }
             st.last_len = text.chars().count();
             if !st.primed || st.path != path {
                 st.path = path;
@@ -1362,8 +1342,14 @@ fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
                     .filter(|l| now.contains(l) && l.chars().count() >= 12)
                     .collect();
                 let body = body.join(" ");
-                if body.chars().count() >= 20 && fire.is_none() {
-                    fire = Some((body, st.path.clone()));
+                if body.chars().count() >= 20 {
+                    st.last_reply = Some((st.path.clone(), body.clone(), Instant::now()));
+                    // Hark's own unread status normally announces the reply
+                    // (with this text). Only if that check isn't working does
+                    // the page text notify on its own.
+                    if !healthy {
+                        fire = Some((body, st.path.clone()));
+                    }
                 }
             }
         }
@@ -1378,6 +1364,205 @@ fn watch_tick(app: &AppHandle, w: &WebviewWindow) {
     });
 }
 
+// ------------------------------------------------ Hark's own unread status
+
+/// Every few seconds the app asks Hark, inside the signed-in page, which
+/// conversations are unread (the same check Hark's web app makes). A chat or
+/// project turning unread, or starting to wait for you, is a new reply there.
+/// Fetches can't be awaited from the app side, so the script starts the
+/// request and hands back the previous answer; the next check reads it.
+const STATUS_JS: &str = r#"(function(){
+var W=window;
+function hdr(){var m=document.querySelector('meta[name="hark-locale"]');var h={};if(m&&m.content)h['X-Hark-Locale']=m.content;return h;}
+var f=W.__deskRealFetch||W.fetch;
+function names(j){var out={};var n=0;(function walk(o,d){if(!o||d>6||n>400)return;if(Array.isArray(o)){for(var i=0;i<o.length;i++)walk(o[i],d+1);return;}if(typeof o!=='object')return;if(typeof o.id==='string'){var t=o.title||o.name||o.display_name||o.displayName;if(typeof t==='string'){out[o.id]=[t.slice(0,60),String(o.kind||o.type||'')];n++;}}for(var k in o){if(o[k]&&typeof o[k]==='object')walk(o[k],d+1);}})(j,0);return out;}
+if(!W.__deskStatusBusy&&location.host==='app.hark.com'){W.__deskStatusBusy=1;
+f.call(W,'/api/conversations/status',{credentials:'include',headers:hdr()}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){W.__deskStatus={ok:1,s:(j&&j.statuses)||{},at:Date.now()};}).catch(function(e){W.__deskStatus={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskStatusBusy=0;});
+if(!W.__deskNames||Date.now()-(W.__deskNamesAt||0)>60000){W.__deskNamesAt=Date.now();f.call(W,'/api/conversations',{credentials:'include',headers:hdr()}).then(function(r){return r.ok?r.json():null;}).then(function(j){if(j)W.__deskNames=names(j);}).catch(function(){});}
+}
+return [location.pathname,W.__deskStatus||null,W.__deskNames||null,!!W.__deskAway];
+})()"#;
+
+/// Tells the page whether the window is away, and when it's back, sends the
+/// "read" marks Hark tried to send while it was hidden.
+const AWAY_JS: &str = "window.__deskAway=true;";
+const BACK_JS: &str = r#"(function(){var W=window;W.__deskAway=false;var h=W.__deskHeldViewed;W.__deskHeldViewed={};var f=W.__deskRealFetch||W.fetch;var m=document.querySelector('meta[name="hark-locale"]');var hd={'Content-Type':'application/json'};if(m&&m.content)hd['X-Hark-Locale']=m.content;var p=(location.pathname.match(/\/project\/([^/?#]+)/)||[])[1];for(var id in (h||{})){if(p&&id!==p)continue;f.call(W,'/api/conversations/'+id+'/viewed',{method:'POST',credentials:'include',headers:hd,keepalive:true}).catch(function(){});}return 1;})()"#;
+
+#[derive(Default)]
+struct StatusWatch {
+    primed: bool,
+    last: std::collections::HashMap<String, String>,
+    names: std::collections::HashMap<String, (String, String)>,
+    checks: u64,
+    ok_at: Option<Instant>,
+    error: Option<String>,
+    notified: u64,
+    /// Conversations that just turned unread, held a moment so the open
+    /// chat's reply text can be included.
+    due: Vec<(String, Instant)>,
+    recent: std::collections::HashMap<String, Instant>,
+}
+static STATUS: std::sync::OnceLock<std::sync::Mutex<StatusWatch>> = std::sync::OnceLock::new();
+fn status_watch() -> &'static std::sync::Mutex<StatusWatch> {
+    STATUS.get_or_init(|| std::sync::Mutex::new(StatusWatch::default()))
+}
+
+/// Hark's status check answered in the last 30 seconds.
+fn status_healthy() -> bool {
+    status_watch()
+        .lock()
+        .ok()
+        .and_then(|s| s.ok_at)
+        .map(|t| t.elapsed() < Duration::from_secs(30))
+        .unwrap_or(false)
+}
+
+fn waiting_state(v: &str) -> bool {
+    v == "unread" || v == "needs_input"
+}
+
+fn conv_path(id: &str, kind: &str) -> String {
+    if kind.to_ascii_lowercase().contains("main") {
+        "/".to_string()
+    } else {
+        format!("/project/{id}")
+    }
+}
+
+/// The conversation the window shows, from its address.
+fn open_conv(path: &str, names: &std::collections::HashMap<String, (String, String)>) -> Option<String> {
+    if let Some(rest) = path.strip_prefix("/project/") {
+        return rest.split('/').next().map(|s| s.to_string());
+    }
+    if path == "/" || path.is_empty() || path.starts_with("/chat") {
+        return names
+            .iter()
+            .find(|(_, (_, k))| k.to_ascii_lowercase().contains("main"))
+            .map(|(id, _)| id.clone());
+    }
+    None
+}
+
+#[cfg(windows)]
+fn status_tick(app: &AppHandle, w: &WebviewWindow) {
+    let app = app.clone();
+    win::eval_page(w, STATUS_JS, move |res| {
+        let Ok(serde_json::Value::Array(v)) = serde_json::from_str::<serde_json::Value>(&res) else { return };
+        let path = v.first().and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let status = v.get(1).cloned().unwrap_or(serde_json::Value::Null);
+        let names_v = v.get(2).cloned().unwrap_or(serde_json::Value::Null);
+        let focused = main_is_focused(&app);
+        let mut fire: Vec<(String, String, String)> = Vec::new();
+        let mut any_unread = false;
+        {
+            let Ok(mut st) = status_watch().lock() else { return };
+            st.checks += 1;
+            if let Some(obj) = names_v.as_object() {
+                for (id, e) in obj {
+                    let t = e.get(0).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let k = e.get(1).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    st.names.insert(id.clone(), (t, k));
+                }
+            }
+            match status.get("ok").and_then(|x| x.as_i64()) {
+                Some(1) => {
+                    st.ok_at = Some(Instant::now());
+                    st.error = None;
+                    let now: std::collections::HashMap<String, String> = status
+                        .get("s")
+                        .and_then(|x| x.as_object())
+                        .map(|o| {
+                            o.iter()
+                                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if st.primed {
+                        for (id, val) in &now {
+                            let before = st.last.get(id).map(|s| s.as_str()).unwrap_or("");
+                            if waiting_state(val) && !waiting_state(before) {
+                                let fresh = st.recent.get(id).map(|t| t.elapsed() > Duration::from_secs(10)).unwrap_or(true);
+                                if fresh && !st.due.iter().any(|(d, _)| d == id) {
+                                    st.due.push((id.clone(), Instant::now()));
+                                }
+                            }
+                        }
+                    }
+                    any_unread = now.values().any(|v| v == "unread");
+                    st.last = now;
+                    st.primed = true;
+                }
+                Some(_) => {
+                    st.error = status.get("err").and_then(|x| x.as_str()).map(|s| s.to_string());
+                }
+                None => {}
+            }
+            // Fire what's been held for a few seconds.
+            let open = open_conv(&path, &st.names);
+            let ready: Vec<String> = st
+                .due
+                .iter()
+                .filter(|(_, t)| t.elapsed() >= Duration::from_secs(5))
+                .map(|(id, _)| id.clone())
+                .collect();
+            st.due.retain(|(id, _)| !ready.contains(id));
+            for id in ready {
+                // You're looking right at it: nothing to announce.
+                if focused && open.as_deref() == Some(id.as_str()) {
+                    continue;
+                }
+                // Still waiting for you? (It may have been read on another device.)
+                if !st.last.get(&id).map(|v| waiting_state(v)).unwrap_or(false) {
+                    continue;
+                }
+                let (title, kind) = st.names.get(&id).cloned().unwrap_or_default();
+                let title = if kind.to_ascii_lowercase().contains("main") || title.is_empty() {
+                    if kind.to_ascii_lowercase().contains("main") { "Hark".to_string() } else { "a project".to_string() }
+                } else {
+                    title
+                };
+                let mut body = String::from("Open it to read the reply.");
+                if open.as_deref() == Some(id.as_str()) {
+                    if let Ok(w) = watch().lock() {
+                        if let Some((_, text, at)) = &w.last_reply {
+                            if at.elapsed() < Duration::from_secs(90) {
+                                body = text.clone();
+                            }
+                        }
+                    }
+                }
+                st.recent.insert(id.clone(), Instant::now());
+                st.notified += 1;
+                fire.push((format!("New reply in {title}"), body, conv_path(&id, &kind)));
+            }
+        }
+        for (title, body, p) in fire {
+            let body: String = if body.chars().count() > 160 {
+                format!("{}…", body.chars().take(160).collect::<String>())
+            } else {
+                body
+            };
+            mark_toast();
+            notify_reply_titled(&app, &title, &body, Some(p));
+            if !focused {
+                set_badge(&app, true);
+            }
+        }
+        if !any_unread && focused {
+            set_badge(&app, false);
+        }
+    });
+}
+
+#[cfg(windows)]
+fn set_away(w: &WebviewWindow, away: bool) {
+    if away {
+        win::eval_page(w, AWAY_JS, |_| {});
+    } else {
+        win::eval_page(w, BACK_JS, |_| {});
+    }
+}
+
 fn watch_reset() {
     if let Ok(mut st) = watch().lock() {
         st.primed = false;
@@ -1390,8 +1575,30 @@ fn watch_status(app: &AppHandle) {
         .lock()
         .map(|s| (s.checks, s.notified, s.last_len))
         .unwrap_or((0, 0, 0));
+    let (s_checks, s_ok, s_err, s_notified, waiting) = status_watch()
+        .lock()
+        .map(|s| {
+            let waiting: Vec<String> = s
+                .last
+                .iter()
+                .filter(|(_, v)| waiting_state(v))
+                .map(|(id, v)| {
+                    let name = s.names.get(id).map(|(t, _)| t.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| id.chars().take(8).collect());
+                    format!("  {name}: {}", v.replace('_', " "))
+                })
+                .collect();
+            (
+                s.checks,
+                s.ok_at.map(|t| format!("{}s ago", t.elapsed().as_secs())).unwrap_or_else(|| "never".into()),
+                s.error.clone().unwrap_or_else(|| "none".into()),
+                s.notified,
+                waiting,
+            )
+        })
+        .unwrap_or_default();
+    let waiting = if waiting.is_empty() { "  nothing".to_string() } else { waiting.join("\n") };
     let text = format!(
-        "Background checks of Hark's page: {checks}\nText in the open chat at the last check: {len} characters\nNew-message notifications shown: {notified}\n\nChecks run only while the window is minimised or hidden. If checks stay at 0, or the text length doesn't change when a reply arrives, please report it."
+        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications."
     );
     app.dialog().message(text).title("Notification status").kind(MessageDialogKind::Info).show(|_| {});
 }
@@ -1765,15 +1972,28 @@ fn main() {
             #[cfg(windows)]
             {
                 let awake = handle.clone();
-                std::thread::spawn(move || loop {
-                    std::thread::sleep(Duration::from_millis(1500));
-                    if let Some(w) = main_window(&awake) {
+                std::thread::spawn(move || {
+                    let mut n: u64 = 0;
+                    let mut was_away: Option<bool> = None;
+                    loop {
+                        std::thread::sleep(Duration::from_millis(1500));
+                        n += 1;
+                        let Some(w) = main_window(&awake) else { continue };
                         let away = !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false);
+                        // Re-sent every few seconds too, in case Hark's page reloaded.
+                        if was_away != Some(away) || n % 4 == 0 {
+                            set_away(&w, away);
+                        }
+                        was_away = Some(away);
                         if away {
                             win::keep_page_awake(&w);
                             watch_tick(&awake, &w);
                         } else {
                             watch_reset();
+                        }
+                        // Hark's unread status: every 3 seconds.
+                        if n % 2 == 0 {
+                            status_tick(&awake, &w);
                         }
                     }
                 });

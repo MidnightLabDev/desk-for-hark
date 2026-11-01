@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+**Changed**
+- **Notifications rebuilt on Hark's own unread status.** Every few seconds the app asks Hark which conversations are unread or waiting for you, the same check Hark's web app makes, so replies in any chat or project notify reliably: **New reply in <project>**, and clicking opens it.
+- The open chat is no longer marked as read while the window is hidden or minimised, so its replies notify too; it's marked read when you come back.
+- The tray and taskbar dot clears once nothing is unread.
+- **Tray > Notification status…** now shows the last check, what's waiting for you and any error.
+
+**Removed**
+- The 1.4.2 guess based on sidebar order. Reading the page text is kept only as a backup when Hark's status check isn't answering.
+
 ## 1.4.4
 
 **Fixed**

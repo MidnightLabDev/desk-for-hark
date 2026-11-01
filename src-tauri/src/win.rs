@@ -488,13 +488,14 @@ pub fn keep_page_awake(window: &WebviewWindow) {
 
 /// Runs a script in Hark's page from the app side (no page-to-app messaging
 /// involved) and hands back its JSON result.
-pub fn eval_page(window: &WebviewWindow, js: &'static str, cb: impl FnOnce(String) + Send + 'static) {
+pub fn eval_page(window: &WebviewWindow, js: impl Into<String>, cb: impl FnOnce(String) + Send + 'static) {
+    let js: String = js.into();
     let _ = window.with_webview(move |wv| unsafe {
         let Ok(core) = wv.controller().CoreWebView2() else { return };
         let handler = ExecuteScriptCompletedHandler::create(Box::new(move |_err, result| {
             cb(result);
             Ok(())
         }));
-        let _ = core.ExecuteScript(&HSTRING::from(js), &handler);
+        let _ = core.ExecuteScript(&HSTRING::from(js.as_str()), &handler);
     });
 }

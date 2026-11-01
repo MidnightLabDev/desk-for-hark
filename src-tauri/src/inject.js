@@ -146,9 +146,20 @@
     } catch (e) { return false; }
   }
   var realFetch = window.fetch;
+  window.__deskRealFetch = realFetch;
   window.fetch = function (input, init) {
     try {
       var u = typeof input === "string" ? input : (input && input.url) || String(input);
+      // While the window is hidden or minimised, Hark still thinks you're
+      // looking at the open chat and marks it read. The app holds that back
+      // so the chat shows as unread (and notifies), then sends it once
+      // you're back.
+      var vm = window.__deskAway && /\/api\/conversations\/([^/?#]+)\/viewed/.exec(u);
+      if (vm) {
+        var held = window.__deskHeldViewed || (window.__deskHeldViewed = {});
+        held[vm[1]] = 1;
+        return Promise.resolve(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
       if (isStorage(u)) {
         init = Object.assign({}, init || {}, { cache: "no-store" });
         if (typeof input !== "string" && input instanceof Request) input = input.url;
