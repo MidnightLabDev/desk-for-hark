@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.6
+
+**Fixed**
+- **⌕ Show in chat** gave up after about 10 seconds on older files ("Couldn't find that message"). It now keeps loading older messages until the chat reaches the file's date, waiting for each batch instead of a fixed pause, with a progress banner ("Going back to 30 Oct… Now at 1 Nov.") and **Cancel** (or Esc).
+
+**New**
+- **Message** button in the file viewer: a side pane with the message the file came in and your request before it, with date and time. Works for any file however far back, without scrolling. **Go there** jumps to it in the chat.
+- Banners are bigger and easier to read.
+
 ## 1.6.5
 
 **Fixed**

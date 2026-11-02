@@ -558,18 +558,30 @@
 
   // ---- Small banner (offline, hints) ----------------------------------------
   var bannerEl = null, bannerTimer = null;
-  function banner(text, ms) {
+  function banner(text, ms, action) {
     if (!document.body) return;
     if (!bannerEl) {
       bannerEl = document.createElement("div");
       bannerEl.setAttribute("role", "status");
-      bannerEl.style.cssText = "position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:2147483647;" +
-        "background:#1e1f24;color:#f5f5f7;border:1px solid rgba(255,255,255,.14);border-radius:12px;" +
-        "padding:10px 16px;font:500 13px 'Segoe UI',sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);pointer-events:none";
+      bannerEl.style.cssText = "position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:2147483647;" +
+        "background:#1e1f24;color:#f5f5f7;border:1px solid rgba(255,255,255,.16);border-radius:14px;" +
+        "padding:14px 22px;min-width:320px;max-width:min(640px,90vw);box-sizing:border-box;text-align:center;" +
+        "font:600 15px/1.4 'Segoe UI Variable','Segoe UI',sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.45);" +
+        "display:flex;align-items:center;justify-content:center;gap:14px;pointer-events:none";
       document.body.appendChild(bannerEl);
     }
-    bannerEl.textContent = text;
-    bannerEl.style.display = "block";
+    bannerEl.textContent = "";
+    bannerEl.appendChild(document.createElement("span")).textContent = text;
+    bannerEl.style.pointerEvents = action ? "auto" : "none";
+    if (action) {
+      var ab = document.createElement("button");
+      ab.textContent = action.label;
+      ab.style.cssText = "border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.08);color:inherit;" +
+        "padding:6px 14px;border-radius:9px;cursor:pointer;font:600 14px 'Segoe UI',sans-serif;flex:none";
+      ab.onclick = function () { bannerEl.style.display = "none"; action.fn(); };
+      bannerEl.appendChild(ab);
+    }
+    bannerEl.style.display = "flex";
     clearTimeout(bannerTimer);
     if (ms) bannerTimer = setTimeout(function () { bannerEl.style.display = "none"; }, ms);
   }
@@ -587,7 +599,7 @@
   // opened with Ctrl+Shift+F, the tab on the right edge, or the tray.
   (function () {
     var KEY = "deskForHark.filesOpen.v1";
-    var enabled = true, open = false, pid = null, files = {}, loading = false, err = "";
+    var enabled = true, open = false, pid = null, files = {}, msgs = {}, loading = false, err = "";
     var panel, tab, listEl, searchEl, statusEl, pollTimer = null, loadedFor = null;
     try { open = localStorage.getItem(KEY) === "1"; } catch (e) {}
     var realFetch = window.__deskRealFetch || window.fetch;
@@ -606,8 +618,15 @@
       return isNaN(n) ? 0 : n;
     }
     // Walks one message and picks up every object that looks like a file.
+    function textOf(m) {
+      var c = m && (m.content != null ? m.content : m.text);
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map(function (p) { return typeof p === "string" ? p : (p && (p.text || p.content)) || ""; }).filter(Boolean).join("\n");
+      return "";
+    }
     function collect(m) {
       var mine = m.role === "user", when = stamp(m), seen = 0;
+      msgs[m.id] = { id: m.id, role: m.role, when: when, text: textOf(m).slice(0, 6000) };
       (function walk(o, depth) {
         if (!o || typeof o !== "object" || depth > 8 || seen > 200) return;
         if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) walk(o[i], depth + 1); return; }
@@ -650,7 +669,7 @@
     function load(full) {
       var id = projectId();
       if (!id || loading) return;
-      if (id !== loadedFor) { files = {}; full = true; }
+      if (id !== loadedFor) { files = {}; msgs = {}; full = true; }
       loading = true; err = ""; render();
       var pages = 0, ids = {};
       function step(before) {
@@ -747,8 +766,8 @@
       statusEl.textContent = err || (loading ? "Reading this project's files…" : (all.length ? "" : (q ? "No files match." : "No files in this project's chat yet.")));
     }
     // "Show in chat": scrolls to the message and outlines it. When it isn't
-    // loaded yet, scrolls the chat up step by step so Hark loads older
-    // messages (about 10 seconds at most). Never reloads the page.
+    // loaded yet, scrolls the chat up batch by batch so Hark loads older
+    // messages, until it gets there. Never reloads the page.
     var finding = 0;
     function msgNode(id) {
       try { return document.querySelector('[data-message-id="' + CSS.escape(String(id)) + '"]'); } catch (e) { return null; }
@@ -767,20 +786,51 @@
       node.style.outline = "2px solid rgba(127,127,255,.65)"; node.style.outlineOffset = "4px";
       setTimeout(function () { node.style.outline = old; node.style.outlineOffset = oldOff; }, 1800);
     }
+    function day(t) { try { return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }); } catch (e) { return ""; } }
+    function oldestLoaded() {
+      var all = document.querySelectorAll("[data-message-id]"), best = 0;
+      for (var i = 0; i < all.length; i++) {
+        var m = msgs[all[i].getAttribute("data-message-id")];
+        if (m && m.when && (!best || m.when < best)) best = m.when;
+      }
+      return best;
+    }
+    // Keeps loading older messages until the chat reaches the file's date,
+    // waiting for each batch to arrive, then outlines the message. Stops
+    // when it's found, when Hark has nothing older, or on Cancel / Esc.
     function goTo(f) {
       if (!f.msg) { banner("This file isn't linked to a message.", 2500); return; }
       var node = msgNode(f.msg);
       if (node) { flash(node); return; }
-      var run = ++finding, tries = 0;
-      banner("Finding it in the chat…");
+      var run = ++finding, idle = 0, target = (msgs[f.msg] && msgs[f.msg].when) || f.when || 0;
+      function cancel() { finding++; if (bannerEl) bannerEl.style.display = "none"; document.removeEventListener("keydown", esc, true); }
+      function esc(e) { if (e.key === "Escape" && run === finding) { e.stopPropagation(); cancel(); } }
+      document.addEventListener("keydown", esc, true);
+      function done(msg) { document.removeEventListener("keydown", esc, true); if (msg) banner(msg, 4500); else if (bannerEl) bannerEl.style.display = "none"; }
+      function progress() {
+        var at = oldestLoaded();
+        banner("Going back to " + (target ? day(target) : "that message") + "…" + (at ? "  Now at " + day(at) + "." : ""), 0, { label: "Cancel", fn: cancel });
+      }
+      progress();
       (function step() {
         if (run !== finding) return;
         var n = msgNode(f.msg);
-        if (n) { if (bannerEl) bannerEl.style.display = "none"; flash(n); return; }
-        if (++tries > 25) { banner("Couldn't find that message in the chat. It may be further back.", 3500); return; }
+        if (n) { done(); flash(n); return; }
         var sc = scroller();
-        if (sc) sc.scrollTop = 0;
-        setTimeout(step, 400);
+        if (!sc) { done("Couldn't find the chat to scroll. Use Message in the viewer instead."); return; }
+        var before = document.querySelectorAll("[data-message-id]").length, h = sc.scrollHeight;
+        sc.scrollTop = 0;
+        var waited = 0;
+        (function wait() {
+          if (run !== finding) return;
+          if (msgNode(f.msg)) { step(); return; }
+          var grew = document.querySelectorAll("[data-message-id]").length > before || sc.scrollHeight > h + 4;
+          if (grew) { idle = 0; progress(); setTimeout(step, 120); return; }
+          if ((waited += 150) < 2500) { setTimeout(wait, 150); return; }
+          // Nothing new after a while: nudge once more, then give up.
+          if (++idle >= 3) { done("Reached the start of the chat without finding it. Use Message in the viewer to see it."); return; }
+          sc.scrollTop = 40; setTimeout(step, 200);
+        })();
       })();
     }
 
@@ -848,13 +898,40 @@
       viewer = el("div", "position:fixed;inset:0;z-index:2147483600;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center");
       viewer.onclick = function (e) { if (e.target === viewer) closeViewer(); };
       var box = el("div", "width:min(1100px,92vw);height:min(86vh,1000px);display:flex;flex-direction:column;background:" + BG + ";color:" + INK + ";" +
-        "border:1px solid " + LINE + ";border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);font:13px 'Segoe UI Variable','Segoe UI',sans-serif");
+        "border:1px solid " + LINE + ";border-radius:14px;overflow:hidden;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.4);font:13px 'Segoe UI Variable','Segoe UI',sans-serif");
       var head = el("div", "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid " + LINE);
       head.appendChild(el("div", "flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", f.name));
       var chat = el("button", btnCss(), "⌕"); chat.title = "Show in chat"; chat.onclick = function () { closeViewer(); goTo(f); };
+      var info = el("button", btnCss() + ";width:auto;padding:0 10px", "Message"); info.title = "The message this file came in";
+      var pane = null;
+      info.onclick = function () {
+        if (pane) { pane.remove(); pane = null; return; }
+        pane = el("div", "position:absolute;top:47px;right:0;bottom:0;width:min(400px,85%);background:" + BG + ";border-left:1px solid " + LINE +
+          ";overflow:auto;padding:14px 16px;box-sizing:border-box;box-shadow:-10px 0 30px rgba(0,0,0,.25)");
+        var m = msgs[f.msg], req = null;
+        if (m && m.role === "user") req = m;
+        else if (m) {
+          Object.keys(msgs).forEach(function (k) { var x = msgs[k]; if (x.role === "user" && x.when <= m.when && (!req || x.when > req.when)) req = x; });
+        }
+        function block(title, x) {
+          pane.appendChild(el("div", "font-weight:600;margin:4px 0 2px", title));
+          pane.appendChild(el("div", "color:" + SUB + ";font-size:11px;margin-bottom:6px", when(x.when)));
+          var t = el("div", "white-space:pre-wrap;word-break:break-word;line-height:1.5;margin-bottom:16px;unicode-bidi:plaintext", x.text || "(no text, only files)");
+          t.dir = "auto"; pane.appendChild(t);
+        }
+        if (!m) pane.appendChild(el("div", "color:" + SUB, "This message isn't in the history the panel read."));
+        else {
+          if (req) block(req === m ? "You" : "Your request", req);
+          if (m !== req) block("Hark", m);
+        }
+        var go = el("button", "border:1px solid " + LINE + ";background:transparent;color:inherit;padding:7px 14px;border-radius:8px;cursor:pointer;font:inherit", "⌕  Go there");
+        go.onclick = function () { closeViewer(); goTo(f); };
+        pane.appendChild(go);
+        box.appendChild(pane);
+      };
       var dl = el("button", btnCss(), "⤓"); dl.title = "Download to Downloads"; dl.onclick = function () { download(f); };
       var x = el("button", btnCss(), "✕"); x.title = "Close (Esc)"; x.onclick = closeViewer;
-      head.appendChild(chat); head.appendChild(dl); head.appendChild(x);
+      head.appendChild(info); head.appendChild(chat); head.appendChild(dl); head.appendChild(x);
       var body = el("div", "flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center");
       box.appendChild(head); box.appendChild(body); viewer.appendChild(box); document.body.appendChild(viewer);
       function note(text, withDl, err) {
