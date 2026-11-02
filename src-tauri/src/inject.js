@@ -389,7 +389,7 @@
     try {
       var rp = resolvePalette(p);
       guardReset();
-      guardOn = !!rp.pal.dark && !rp.pal.light;
+      guardOn = !!rp.pal.dark && !rp.pal.light && rp.name !== "hark";
       if (guardOn) setTimeout(function () { try { guardRun(); } catch (e) {} }, 400);
     } catch (e) {}
     if (window.__deskFilesSetting) window.__deskFilesSetting(p.filesPanel !== false);

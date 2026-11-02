@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.9
+
+**Fixed**
+- The Hark theme looks exactly like Hark again. 1.6.8's readable-text guard also ran on it and brightened Hark's own grey text; it now runs only on Desk's dark themes.
+
 ## 1.6.8
 
 **Fixed**

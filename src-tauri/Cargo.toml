@@ -1,6 +1,6 @@
 [package]
 name = "desk-for-hark"
-version = "1.6.8"
+version = "1.6.9"
 description = "Desk for Hark: an unofficial Windows desktop app for Hark"
 repository = "https://github.com/MidnightLabDev/desk-for-hark"
 edition = "2021"
