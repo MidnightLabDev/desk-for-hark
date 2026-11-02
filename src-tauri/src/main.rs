@@ -356,15 +356,30 @@ fn unique_file(dir: &Path, name: &str) -> PathBuf {
         .unwrap_or(first)
 }
 
+/// The last download and what happened to it, for Tray > Notification status.
+static LAST_DL: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+pub(crate) fn note_download(what: &str, result: &str) {
+    if let Ok(mut s) = LAST_DL.lock() {
+        *s = format!("{what} -> {result}");
+    }
+}
+/// An address without its query (signed links carry tokens there).
+fn bare(url: &Url) -> String {
+    format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or(""), url.path())
+}
+
 /// Saves a Hark file link byte for byte (so the file keeps its own
 /// encoding), to Downloads or, with "Ask where to save" on, where the user picks.
 fn download_url(app: &AppHandle, url: &Url) {
     let app = app.clone();
     let url = url.clone();
     std::thread::spawn(move || {
+        let shown_url = bare(&url);
+        note_download(&shown_url, "downloading");
         let resp = match ureq::get(url.as_str()).call() {
             Ok(r) => r,
-            Err(_) => {
+            Err(e) => {
+                note_download(&shown_url, &format!("failed ({})", match &e { ureq::Error::Status(c, _) => format!("HTTP {c}"), other => other.kind().to_string() }));
                 notify_text(&app, "Download failed", "Couldn't download that file from Hark.");
                 return;
             }
@@ -377,7 +392,7 @@ fn download_url(app: &AppHandle, url: &Url) {
             }
             match dlg.blocking_save_file().and_then(|fp| fp.into_path().ok()) {
                 Some(p) => p,
-                None => return,
+                None => { note_download(&shown_url, "cancelled"); return; }
             }
         } else {
             let dir = app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir());
@@ -387,6 +402,8 @@ fn download_url(app: &AppHandle, url: &Url) {
         let ok = fs::File::create(&target)
             .and_then(|mut f| std::io::copy(&mut resp.into_reader(), &mut f).map(|_| ()))
             .is_ok();
+        note_download(&shown_url, if ok { "saved as " } else { "write failed: " });
+        if let Ok(mut s) = LAST_DL.lock() { s.push_str(&shown); }
         if ok {
             notify_text(&app, "Saved to Downloads", &shown);
         } else {
@@ -435,7 +452,7 @@ fn hark_popup(app: &AppHandle, url: &Url, features: tauri::webview::NewWindowFea
         .window_features(features)
         .visible(false)
         .on_navigation(move |u| {
-            if is_hark_file(u) {
+            if is_storage_host(u) {
                 download_url(&nav_app, u);
                 close_popup_later(&nav_app, nav_label.clone());
                 false
@@ -476,6 +493,9 @@ fn hark_popup(app: &AppHandle, url: &Url, features: tauri::webview::NewWindowFea
 }
 
 fn open_in_browser(app: &AppHandle, url: &str) {
+    if let Ok(u) = Url::parse(url) {
+        note_download(&bare(&u), "opened in your browser");
+    }
     let _ = app.opener().open_url(url, None::<&str>);
 }
 
@@ -1642,8 +1662,10 @@ fn watch_status(app: &AppHandle) {
         })
         .unwrap_or_default();
     let waiting = if waiting.is_empty() { "  nothing".to_string() } else { waiting.join("\n") };
+    let last_dl = LAST_DL.lock().map(|s| s.clone()).unwrap_or_default();
+    let last_dl = if last_dl.is_empty() { "none yet".to_string() } else { last_dl };
     let text = format!(
-        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications."
+        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications.\n\nLast download or link: {last_dl}"
     );
     app.dialog().message(text).title("Notification status").kind(MessageDialogKind::Info).show(|_| {});
 }
@@ -1745,6 +1767,7 @@ fn save_bytes(app: AppHandle, name: String, data: String) -> bool {
         };
         let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
         if fs::write(&target, &bytes).is_ok() {
+            note_download("file from the page", &format!("saved as {shown}"));
             notify_text(&app, "Saved to Downloads", &shown);
         } else {
             notify_text(&app, "Download failed", &shown);
@@ -2031,7 +2054,7 @@ fn main() {
                 .disable_drag_drop_handler()
                 .initialization_script(INJECT_JS)
                 .on_navigation(move |url| {
-                    if is_hark_file(url) {
+                    if is_storage_host(url) {
                         download_url(&nav_handle, url);
                         false
                     } else if is_internal(&nav_handle, url) {
@@ -2046,7 +2069,7 @@ fn main() {
                         .host_str()
                         .map(|h| AUTH_HOSTS.iter().any(|p| host_matches(h, p)))
                         .unwrap_or(false);
-                    if is_hark_file(&url) {
+                    if is_storage_host(&url) {
                         download_url(&popup_handle, &url);
                         NewWindowResponse::Deny
                     } else if auth {

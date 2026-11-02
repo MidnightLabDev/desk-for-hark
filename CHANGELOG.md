@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1
+
+**Fixed**
+- **Download** in Hark's preview opened images and PDFs in your browser instead of saving them. Anything Hark opens from its file storage, images and PDFs included, now saves straight to Downloads in the background.
+- Download links on Hark's own addresses are fetched inside your signed-in page and saved; real pages still open as usual.
+
+**New**
+- **Tray > Notification status…** shows the last download or link and what happened to it (address without tokens), to make download problems easy to spot.
+
 ## 1.7.0
 
 **Fixed**

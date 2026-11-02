@@ -196,6 +196,17 @@
       invoke("download_file", { url: abs }).then(function (ok) { if (!ok && fallback) fallback(); }, function () { if (fallback) fallback(); });
       return true;
     }
+    var hh = ""; try { hh = new URL(abs).hostname; } catch (e) {}
+    if (/(^|\.)hark\.com$/.test(hh) && /^(blob|data):/i.test(abs) === false) {
+      realFetch.call(window, abs, { credentials: "include" }).then(function (r) {
+        var ct = r.headers.get("content-type") || "";
+        if (!r.ok || /text\/html/i.test(ct)) throw new Error("page");
+        var cd = r.headers.get("content-disposition") || "", m = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
+        return r.blob().then(function (b) { return b.arrayBuffer().then(function (buf) {
+          return invoke("save_bytes", { name: nameFrom(abs, name || (m ? decodeURIComponent(m[1]) : ""), b.type), data: bytesB64(buf) }); }); });
+      }).then(function (ok) { if (!ok && fallback) fallback(); }, function () { if (fallback) fallback(); });
+      return true;
+    }
     if (/^(blob|data):/i.test(abs)) {
       realFetch.call(window, abs).then(function (r) { return r.blob(); }).then(function (b) {
         return b.arrayBuffer().then(function (buf) { return invoke("save_bytes", { name: nameFrom(abs, name, b.type), data: bytesB64(buf) }); });
@@ -208,7 +219,8 @@
   function wantsSave(a) {
     if (!a || a.__deskPass) return false;
     var h = a.getAttribute("href") || "";
-    return a.hasAttribute("download") && (/^(blob|data):/i.test(h) || isStorage(h));
+    var hk = false; try { var uu = new URL(h, location.href); hk = /(^|\.)hark\.com$/.test(uu.hostname) && uu.pathname !== location.pathname; } catch (e) {}
+    return a.hasAttribute("download") && (/^(blob|data):/i.test(h) || isStorage(h) || hk);
   }
   function passClick(a) { a.__deskPass = true; try { realAClick.call(a); } finally { setTimeout(function () { a.__deskPass = false; }, 0); } }
   HTMLAnchorElement.prototype.click = function () {
@@ -231,6 +243,7 @@
   function openReal(u, name, features) {
     u = String(u || "");
     if (/^(blob|data):/i.test(u)) { saveBlob(u, ""); return null; }
+    if (isStorage(u) && deskSave(u, "", function () { realOpen.call(window, u, name, features); })) return null;
     return realOpen.call(window, u, name, features);
   }
   window.open = function (url, name, features) {
