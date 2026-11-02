@@ -369,7 +369,7 @@ fn bare(url: &Url) -> String {
 }
 
 /// Saves a Hark file link byte for byte (so the file keeps its own
-/// encoding), to Downloads or, with "Ask where to save" on, where the user picks.
+/// encoding), always through a Save As dialog that opens in Downloads.
 fn download_url(app: &AppHandle, url: &Url) {
     let app = app.clone();
     let url = url.clone();
@@ -385,7 +385,7 @@ fn download_url(app: &AppHandle, url: &Url) {
             }
         };
         let name = download_name(&url, resp.header("content-disposition"));
-        let target = if settings(&app).ask_before_saving {
+        let target = if true {
             let mut dlg = app.dialog().file().set_file_name(&name);
             if let Ok(d) = app.path().download_dir() {
                 dlg = dlg.set_directory(d);
@@ -1715,7 +1715,7 @@ fn save_bytes(app: AppHandle, name: String, data: String) -> bool {
     let Ok(bytes) = B64.decode(data.as_bytes()) else { return false };
     let name = safe_file_name(&name);
     std::thread::spawn(move || {
-        let target = if settings(&app).ask_before_saving {
+        let target = if true {
             let mut dlg = app.dialog().file().set_file_name(&name);
             if let Ok(d) = app.path().download_dir() {
                 dlg = dlg.set_directory(d);
@@ -2063,7 +2063,7 @@ fn main() {
                     &window,
                     win::HookOptions {
                         auto_grant_mic: s.auto_grant_mic,
-                        ask_before_saving: s.ask_before_saving,
+                        ask_before_saving: true,
                         offline_url: format!("{LOCAL_ORIGIN}/offline.html"),
                         popup: None,
                     },

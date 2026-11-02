@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.4
+
+- Every download now opens a Save As dialog (starting in Downloads), so you always choose where a file goes. The "Ask where to save downloads" setting is gone, since this is now how saving always works.
+
 ## 1.7.3
 
 - Fixed the app freezing ("Not Responding") and closing when you press Download in Hark's file preview. The app used to build a hidden helper window whenever Hark asked for a new window on its own address, and building a window inside that Windows event locks the whole app. It no longer builds one: the file is fetched in your signed-in page and saved straight to Downloads (or with a Save As dialog when "Ask where to save" is on), and a real Hark page opens in your browser.
