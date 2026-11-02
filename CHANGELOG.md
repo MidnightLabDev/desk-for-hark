@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.6
+
+- Save As opens faster: the app keeps Windows' Save dialog ready from launch instead of starting it from scratch each time.
+- Save As opens in the last folder you saved to (Downloads the first time). A crowded Downloads folder made the dialog slow to appear.
+- Files from Hark's storage start downloading the moment you press Download and stream to disk while you pick where to save.
+- Tray > Notification status shows a timing line for the last download (press to dialog, dialog open time, download time), to find what's still slow.
+
 ## 1.7.5
 
 - Save As is quicker: it opens as soon as you press Download, while the file is still coming in, instead of after the whole file has arrived.

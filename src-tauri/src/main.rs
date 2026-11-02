@@ -368,12 +368,54 @@ fn bare(url: &Url) -> String {
     format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or(""), url.path())
 }
 
+static LAST_TIMING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+fn last_dir_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("last-save-folder.txt"))
+}
+
+/// The folder Save As opens in: the last one used, else Downloads.
+fn save_start_dir(app: &AppHandle) -> PathBuf {
+    if let Some(f) = last_dir_file(app) {
+        if let Ok(s) = fs::read_to_string(f) {
+            let p = PathBuf::from(s.trim());
+            if p.is_dir() {
+                return p;
+            }
+        }
+    }
+    app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir())
+}
+
+/// Save As (blocking; never on the window's thread). Opens in the last
+/// folder used, which is also quicker than a crowded Downloads folder.
+fn choose_save_path(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    let dir = save_start_dir(app);
+    #[cfg(windows)]
+    let picked = {
+        let w = main_window(app);
+        win::pick_save(w.as_ref(), name, &dir)
+    };
+    #[cfg(not(windows))]
+    let picked = app.dialog().file().set_file_name(name).set_directory(&dir).blocking_save_file().and_then(|fp| fp.into_path().ok());
+    if let (Some(p), Some(f)) = (picked.as_ref(), last_dir_file(app)) {
+        if let Some(parent) = p.parent() {
+            if let Some(d) = f.parent() { let _ = fs::create_dir_all(d); }
+            let _ = fs::write(f, parent.to_string_lossy().as_bytes());
+        }
+    }
+    picked
+}
+
+static PART_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Saves a Hark file link byte for byte (so the file keeps its own
 /// encoding), always through a Save As dialog that opens in Downloads.
 fn download_url(app: &AppHandle, url: &Url) {
     let app = app.clone();
     let url = url.clone();
     std::thread::spawn(move || {
+        let t0 = Instant::now();
         let shown_url = bare(&url);
         note_download(&shown_url, "downloading");
         let resp = match ureq::get(url.as_str()).call() {
@@ -384,30 +426,41 @@ fn download_url(app: &AppHandle, url: &Url) {
                 return;
             }
         };
+        let t_head = t0.elapsed().as_millis();
         let name = download_name(&url, resp.header("content-disposition"));
-        let target = if true {
-            let mut dlg = app.dialog().file().set_file_name(&name);
-            if let Ok(d) = app.path().download_dir() {
-                dlg = dlg.set_directory(d);
-            }
-            match dlg.blocking_save_file().and_then(|fp| fp.into_path().ok()) {
-                Some(p) => p,
-                None => { note_download(&shown_url, "cancelled"); return; }
-            }
-        } else {
-            let dir = app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir());
-            unique_file(&dir, &name)
+        // The file streams to a temporary file while Save As is open.
+        let part = std::env::temp_dir().join(format!("desk-for-hark-{}-{}.part", std::process::id(), PART_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let part2 = part.clone();
+        let reader = std::thread::spawn(move || -> (bool, u64, u128) {
+            let t = Instant::now();
+            let ok = fs::File::create(&part2).and_then(|f| {
+                let mut w = std::io::BufWriter::with_capacity(1 << 20, f);
+                let n = std::io::copy(&mut resp.into_reader(), &mut w)?;
+                use std::io::Write;
+                w.flush()?;
+                Ok(n)
+            });
+            match ok { Ok(n) => (true, n, t.elapsed().as_millis()), Err(_) => (false, 0, t.elapsed().as_millis()) }
+        });
+        let t_pick = Instant::now();
+        let target = choose_save_path(&app, &name);
+        let pick_ms = t_pick.elapsed().as_millis();
+        let (ok, size, dl_ms) = reader.join().unwrap_or((false, 0, 0));
+        let Some(target) = target else {
+            let _ = fs::remove_file(&part);
+            note_download(&shown_url, "cancelled");
+            return;
         };
         let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
-        let ok = fs::File::create(&target)
-            .and_then(|mut f| std::io::copy(&mut resp.into_reader(), &mut f).map(|_| ()))
-            .is_ok();
-        note_download(&shown_url, if ok { "saved as " } else { "write failed: " });
-        if let Ok(mut s) = LAST_DL.lock() { s.push_str(&shown); }
-        if ok {
-            notify_text(&app, "Saved to Downloads", &shown);
+        let moved = ok && (fs::rename(&part, &target).is_ok() || (fs::copy(&part, &target).is_ok() && fs::remove_file(&part).is_ok()));
+        let _ = fs::remove_file(&part);
+        note_download(&shown_url, &if moved { format!("saved as {shown}") } else { format!("write failed: {shown}") });
+        if let Ok(mut s) = LAST_TIMING.lock() {
+            *s = format!("app download: server answered in {t_head} ms, {} KB downloaded in {dl_ms} ms, Save As open {pick_ms} ms, total {} ms", size / 1024, t0.elapsed().as_millis());
+        }
+        if moved {
+            notify_text(&app, "Saved", &shown);
         } else {
-            let _ = fs::remove_file(&target);
             notify_text(&app, "Download failed", &shown);
         }
     });
@@ -448,6 +501,13 @@ fn open_internal_later(app: &AppHandle, url: &Url) {
         #[cfg(not(windows))]
         let _ = w.eval(&js);
     });
+}
+
+#[tauri::command]
+fn note_timing(text: String) {
+    if let Ok(mut s) = LAST_TIMING.lock() {
+        *s = text.chars().take(300).collect();
+    }
 }
 
 #[tauri::command]
@@ -1627,8 +1687,10 @@ fn watch_status(app: &AppHandle) {
     let waiting = if waiting.is_empty() { "  nothing".to_string() } else { waiting.join("\n") };
     let last_dl = LAST_DL.lock().map(|s| s.clone()).unwrap_or_default();
     let last_dl = if last_dl.is_empty() { "none yet".to_string() } else { last_dl };
+    let timing = LAST_TIMING.lock().map(|s| s.clone()).unwrap_or_default();
+    let timing = if timing.is_empty() { "none yet".to_string() } else { timing };
     let text = format!(
-        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications.\n\nLast download or link: {last_dl}"
+        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications.\n\nLast download or link: {last_dl}\nLast download timing: {timing}"
     );
     app.dialog().message(text).title("Notification status").kind(MessageDialogKind::Info).show(|_| {});
 }
@@ -1715,19 +1777,7 @@ fn save_bytes(app: AppHandle, name: String, data: String) -> bool {
     let Ok(bytes) = B64.decode(data.as_bytes()) else { return false };
     let name = safe_file_name(&name);
     std::thread::spawn(move || {
-        let target = if true {
-            let mut dlg = app.dialog().file().set_file_name(&name);
-            if let Ok(d) = app.path().download_dir() {
-                dlg = dlg.set_directory(d);
-            }
-            match dlg.blocking_save_file().and_then(|fp| fp.into_path().ok()) {
-                Some(p) => p,
-                None => return,
-            }
-        } else {
-            let dir = app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir());
-            unique_file(&dir, &name)
-        };
+        let Some(target) = choose_save_path(&app, &name) else { return };
         let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
         if fs::write(&target, &bytes).is_ok() {
             note_download("file from the page (Hark's Download)", &format!("saved as {shown}"));
@@ -1748,16 +1798,10 @@ static PICKED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[tauri::command]
 async fn pick_save_path(app: AppHandle, name: String) -> Option<String> {
     let name = safe_file_name(&name);
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        let mut dlg = app.dialog().file().set_file_name(&name);
-        if let Ok(d) = app.path().download_dir() {
-            dlg = dlg.set_directory(d);
-        }
-        dlg.blocking_save_file().and_then(|fp| fp.into_path().ok())
-    })
-    .await
-    .ok()
-    .flatten()?;
+    let picked = tauri::async_runtime::spawn_blocking(move || choose_save_path(&app, &name))
+        .await
+        .ok()
+        .flatten()?;
     let s = picked.to_string_lossy().to_string();
     if let Ok(mut v) = PICKED.lock() {
         v.push(s.clone());
@@ -2030,6 +2074,7 @@ fn main() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            note_timing,
             pick_save_path,
             write_raw,
             write_bytes,
@@ -2052,6 +2097,8 @@ fn main() {
             open_theme_css
         ])
         .setup(move |app| {
+            #[cfg(windows)]
+            win::save_dialog_warmup();
             let handle = app.handle().clone();
 
             // Settings live in %APPDATA%\dev.midnightlab.deskforhark\

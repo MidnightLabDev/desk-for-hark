@@ -190,11 +190,27 @@
       return t.invoke("write_raw", new Uint8Array(buf), { headers: { "x-path": encodeURIComponent(p) } });
     }).catch(function () { return invoke("write_bytes", { path: p, data: bytesB64(buf) }); });
   }
+  // When Download was pressed, so the timing line can say what lagged.
+  var pressT = 0;
+  document.addEventListener("pointerdown", function (e) {
+    var el = e.target && e.target.closest && e.target.closest("button,a,[role=button]");
+    if (!el) return;
+    var t = ((el.getAttribute("aria-label") || "") + " " + (el.title || "") + " " + (el.textContent || "")).slice(0, 200);
+    if (/download|save/i.test(t)) pressT = Date.now();
+  }, true);
+  function sincePress() { return pressT && Date.now() - pressT < 120000 ? (Date.now() - pressT) + " ms" : "unknown"; }
+  function timing(t) { quiet(invoke("note_timing", { text: t })); }
   function pickAndWrite(name, bufPromise) {
-    var pick = invoke("pick_save_path", { name: name });
-    return Promise.all([pick, bufPromise]).then(function (r) {
-      if (!r[0]) return true; // cancelled
-      return writeTo(r[0], r[1]);
+    var t0 = Date.now(), asked = sincePress(), pickMs = 0, dataMs = 0, size = 0;
+    var pick = invoke("pick_save_path", { name: name }).then(function (p) { pickMs = Date.now() - t0; return p; });
+    var data = Promise.resolve(bufPromise).then(function (b) { dataMs = Date.now() - t0; size = b ? b.byteLength : 0; return b; });
+    return Promise.all([pick, data]).then(function (r) {
+      if (!r[0]) { timing("press to Save As: " + asked + ", cancelled"); return true; }
+      var tw = Date.now();
+      return writeTo(r[0], r[1]).then(function (ok) {
+        timing("press to Save As asked: " + asked + "; Save As open " + pickMs + " ms; file (" + Math.round(size / 1024) + " KB) ready after " + dataMs + " ms; handed to app in " + (Date.now() - tw) + " ms");
+        return ok;
+      });
     });
   }
   function nameFrom(u, name, type) {
@@ -254,8 +270,10 @@
   if (isHark) {
     var deskPicker = function (opts) {
       var name = (opts && opts.suggestedName) || "download";
+      var t0 = Date.now(), asked = sincePress();
       return invoke("pick_save_path", { name: name }).then(function (path) {
         if (!path) throw new DOMException("The user aborted a request.", "AbortError");
+        timing("Hark's save picker: press to Save As asked: " + asked + "; Save As open " + (Date.now() - t0) + " ms");
         return makeHandle(name, path);
       });
     };

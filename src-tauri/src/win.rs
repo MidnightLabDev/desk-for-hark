@@ -20,7 +20,7 @@ use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::System::Variant::VT_LPWSTR;
 use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
@@ -33,6 +33,8 @@ use windows::Win32::UI::Shell::Common::{IObjectArray, IObjectCollection};
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 use windows::Win32::UI::Shell::{
     DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW, ShellLink,
+    FileSaveDialog, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
+    FOS_FORCEFILESYSTEM, FOS_NOREADONLYRETURN, FOS_OVERWRITEPROMPT,
 };
 
 // ------------------------------------------------------------- title bar
@@ -498,4 +500,78 @@ pub fn eval_page(window: &WebviewWindow, js: impl Into<String>, cb: impl FnOnce(
         }));
         let _ = core.ExecuteScript(&HSTRING::from(js.as_str()), &handler);
     });
+}
+
+// ------------------------------------------------------------ Save dialog
+// One thread keeps COM and the shell's Save dialog loaded from launch, so
+// each Save As opens at once instead of starting from scratch.
+
+struct SaveReq {
+    owner: isize,
+    name: String,
+    dir: std::path::PathBuf,
+    reply: std::sync::mpsc::Sender<Option<std::path::PathBuf>>,
+}
+
+static SAVE_TX: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<SaveReq>>> = std::sync::OnceLock::new();
+
+fn save_thread() -> std::sync::mpsc::Sender<SaveReq> {
+    SAVE_TX
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel::<SaveReq>();
+            std::thread::spawn(move || unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                // Load the dialog once now so the first real one is quick.
+                let _warm: windows::core::Result<IFileSaveDialog> =
+                    CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER);
+                drop(_warm);
+                for req in rx {
+                    let out = show_save(req.owner, &req.name, &req.dir);
+                    let _ = req.reply.send(out);
+                }
+            });
+            std::sync::Mutex::new(tx)
+        })
+        .lock()
+        .map(|t| t.clone())
+        .expect("save dialog thread")
+}
+
+unsafe fn show_save(owner: isize, name: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dlg: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+    let _ = dlg.SetFileName(&HSTRING::from(name));
+    if let Some(ext) = std::path::Path::new(name).extension() {
+        let _ = dlg.SetDefaultExtension(&HSTRING::from(ext.to_string_lossy().as_ref()));
+    }
+    let d = dir.to_string_lossy().to_string();
+    if !d.is_empty() {
+        if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(d.as_str()), None::<&windows::Win32::System::Com::IBindCtx>) {
+            let _ = dlg.SetFolder(&item);
+        }
+    }
+    if let Ok(opts) = dlg.GetOptions() {
+        let _ = dlg.SetOptions(opts | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM | FOS_NOREADONLYRETURN);
+    }
+    let owner_hwnd = if owner != 0 { Some(HWND(owner as *mut core::ffi::c_void)) } else { None };
+    dlg.Show(owner_hwnd).ok()?;
+    let item = dlg.GetResult().ok()?;
+    let p = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+    let s = p.to_string().ok();
+    CoTaskMemFree(Some(p.0 as *const core::ffi::c_void));
+    s.map(std::path::PathBuf::from)
+}
+
+/// Starts the Save dialog thread (call at launch).
+pub fn save_dialog_warmup() {
+    let _ = save_thread();
+}
+
+/// Shows Save As (blocking; call off the window's thread). None if cancelled.
+pub fn pick_save(window: Option<&WebviewWindow>, name: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let owner = window.and_then(hwnd_of).map(|h| h.0 as isize).unwrap_or(0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    save_thread()
+        .send(SaveReq { owner, name: name.to_string(), dir: dir.to_path_buf(), reply: tx })
+        .ok()?;
+    rx.recv().ok().flatten()
 }
