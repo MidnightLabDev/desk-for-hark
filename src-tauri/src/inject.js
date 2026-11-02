@@ -285,8 +285,28 @@
     u = String(u || "");
     if (/^(blob|data):/i.test(u)) { saveBlob(u, ""); return null; }
     if (isStorage(u) && deskSave(u, "", function () { realOpen.call(window, u, name, features); })) return null;
+    if (isHark && hkHost(u)) { window.__deskOpenInternal(u); return null; }
     return realOpen.call(window, u, name, features);
   }
+  // A new window Hark asks for on its own address is never built (that
+  // froze the app). The page fetches it with its own session instead:
+  // a file is saved, a real page opens in the browser.
+  function hkHost(u) { try { return /(^|\.)hark\.com$/.test(new URL(u, location.href).hostname); } catch (e) { return false; } }
+  function note(what, res) { quiet(invoke("note_result", { what: String(what).split("?")[0], result: res })); }
+  window.__deskOpenInternal = function (u) {
+    u = String(u || "");
+    if (!u || u === "about:blank") return;
+    var abs; try { abs = new URL(u, location.href).href; } catch (e) { return; }
+    realFetch.call(window, abs, { credentials: "include" }).then(function (r) {
+      var ct = r.headers.get("content-type") || "";
+      if (!r.ok) { note(abs, "HTTP " + r.status + ", opened in your browser"); quiet(invoke("open_external", { url: abs })); return; }
+      if (/text\/html/i.test(ct)) { quiet(invoke("open_external", { url: abs })); return; }
+      var cd = r.headers.get("content-disposition") || "", m = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
+      return r.blob().then(function (b) { return b.arrayBuffer().then(function (buf) {
+        return invoke("save_bytes", { name: nameFrom(abs, m ? decodeURIComponent(m[1]) : "", b.type), data: bytesB64(buf) });
+      }); });
+    }).catch(function (e) { note(abs, "page fetch failed (" + (e && e.message || e) + "), opened in your browser"); quiet(invoke("open_external", { url: abs })); });
+  };
   window.open = function (url, name, features) {
     if (url && String(url) !== "about:blank") return openReal(url, name, features);
     var sent = false;

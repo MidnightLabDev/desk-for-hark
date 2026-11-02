@@ -413,8 +413,6 @@ fn download_url(app: &AppHandle, url: &Url) {
     });
 }
 
-static POPUP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// Closes a popup a moment later (not from inside its own navigation callback).
 /// Closes a popup the app built, unless it became a visible page.
 pub(crate) fn close_hidden_popup(app: &AppHandle, label: String) {
@@ -428,68 +426,33 @@ pub(crate) fn close_hidden_popup(app: &AppHandle, label: String) {
     });
 }
 
-fn close_popup_later(app: &AppHandle, label: String) {
+/// Hark asked for a new window on one of its own addresses (its preview
+/// Download does this). Building a window from inside WebView2's new-window
+/// event deadlocks the whole app on Windows ("Not Responding"), so no window
+/// is built: the main page fetches the address with the signed-in session and
+/// saves the file, or opens a real page in the browser. Runs a moment later,
+/// outside the event.
+fn open_internal_later(app: &AppHandle, url: &Url) {
     let app = app.clone();
+    let url = url.clone();
+    note_download(&bare(&url), "new window asked; fetching in the page");
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(150));
-        if let Some(w) = app.get_webview_window(&label) {
-            let _ = w.destroy();
-        }
+        std::thread::sleep(Duration::from_millis(30));
+        let Some(w) = main_window(&app) else { return };
+        let js = format!(
+            "window.__deskOpenInternal && window.__deskOpenInternal({});",
+            serde_json::to_string(url.as_str()).unwrap_or_else(|_| "\"\"".into())
+        );
+        #[cfg(windows)]
+        win::eval_page(&w, js, |_| {});
+        #[cfg(not(windows))]
+        let _ = w.eval(&js);
     });
 }
 
-/// Hark often opens a blank window first and then points it at a file. A
-/// window the app builds itself (sharing Hark's session and window.opener)
-/// lets the app see where it goes: Hark files are saved, outside links go
-/// to the browser, and the window closes.
-fn hark_popup(app: &AppHandle, url: &Url, features: tauri::webview::NewWindowFeatures) -> NewWindowResponse<Wry> {
-    let label = format!("popup-{}", POPUP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    let nav_app = app.clone();
-    let nav_label = label.clone();
-    let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url.clone()))
-        .title("Desk for Hark")
-        .theme(Some(Theme::Dark))
-        .window_features(features)
-        .visible(false)
-        .on_navigation(move |u| {
-            if is_storage_host(u) {
-                download_url(&nav_app, u);
-                close_popup_later(&nav_app, nav_label.clone());
-                false
-            } else if is_internal(&nav_app, u) {
-                true
-            } else {
-                open_in_browser(&nav_app, u.as_str());
-                close_popup_later(&nav_app, nav_label.clone());
-                false
-            }
-        })
-        .build();
-    match built {
-        Ok(window) => {
-            // The window stays hidden: a download is saved without anything
-            // appearing, and a real page shows the window once it loads.
-            #[cfg(windows)]
-            win::install_webview_hooks(
-                &window,
-                win::HookOptions {
-                    auto_grant_mic: false,
-                    ask_before_saving: settings(app).ask_before_saving,
-                    offline_url: String::new(),
-                    popup: Some(label.clone()),
-                },
-            );
-            // Tidy up a hidden popup that never turned into anything.
-            let a = app.clone();
-            let l = label.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_secs(600));
-                close_hidden_popup(&a, l);
-            });
-            NewWindowResponse::Create { window }
-        }
-        Err(_) => NewWindowResponse::Allow,
-    }
+#[tauri::command]
+fn note_result(what: String, result: String) {
+    note_download(&what, &result);
 }
 
 fn open_in_browser(app: &AppHandle, url: &str) {
@@ -1987,6 +1950,7 @@ fn main() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            note_result,
             notify,
             new_reply,
             badge,
@@ -2076,7 +2040,11 @@ fn main() {
                         // Sign-in popups keep window.opener so OAuth can finish.
                         NewWindowResponse::Allow
                     } else if is_internal(&popup_handle, &url) {
-                        hark_popup(&popup_handle, &url, features)
+                        let _ = features;
+                        if url.scheme() == "http" || url.scheme() == "https" {
+                            open_internal_later(&popup_handle, &url);
+                        }
+                        NewWindowResponse::Deny
                     } else {
                         open_in_browser(&popup_handle, url.as_str());
                         NewWindowResponse::Deny
