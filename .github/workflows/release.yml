@@ -12,9 +12,9 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
 
@@ -73,7 +73,7 @@ jobs:
 
             ---
             Desk for Hark, an unofficial Windows desktop app for Hark. Not affiliated with Hark.
-            Download the -setup.exe (recommended) or the .msi below. Installed copies update themselves.
+            Download the -setup.exe (recommended) or the .msi below. Updates are manual for now: Tray > Check for updates opens the latest release.
             If SmartScreen appears, click "More info", then "Run anyway".
             See the README for features and PRIVACY.md for what the app does and doesn't do.
           releaseDraft: false
