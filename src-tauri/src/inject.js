@@ -236,6 +236,11 @@
     if (!o.light) {
       v["--color-neutral-black"] = o.bg;
       v["--color-neutral-extra-dark-gray"] = o.surface;
+      // Dark themes: every text level stays white or near-white.
+      v["--text-primary"] = "#ffffff"; v["--color-text-primary"] = "#ffffff";
+      v["--text-secondary"] = "rgba(255,255,255,.88)"; v["--text-tertiary"] = "rgba(255,255,255,.75)";
+      v["--text-quaternary"] = "rgba(255,255,255,.65)"; v["--text-placeholder"] = "rgba(255,255,255,.6)";
+      v["--color-text-secondary"] = "rgba(255,255,255,.88)"; v["--color-text-small"] = "rgba(255,255,255,.82)";
     }
     if (o.strong) {
       v["--text-secondary"] = rgba(o.ink, .8); v["--text-tertiary"] = rgba(o.ink, .6);
@@ -289,6 +294,65 @@
     return { name: name, pal: pal, accent: accent };
   }
 
+
+  // ---- Readable text guard ------------------------------------------------
+  // On dark themes, any text that is too faint against what is behind it
+  // is turned white. Runs in small batches every couple of seconds (never
+  // on every page change: that froze Hark on big previews before).
+  var guardOn = false, guardSeen = new WeakMap();
+  function parseRgb(s) {
+    var m = /rgba?\(([^)]+)\)/.exec(s || ""); if (!m) return null;
+    var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  }
+  function lum(c) {
+    function ch(v) { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }
+    return .2126 * ch(c.r) + .7152 * ch(c.g) + .0722 * ch(c.b);
+  }
+  function mix(fg, bg) { var a = fg.a; return { r: fg.r * a + bg.r * (1 - a), g: fg.g * a + bg.g * (1 - a), b: fg.b * a + bg.b * (1 - a), a: 1 }; }
+  function bgOf(el, base) {
+    var layers = [];
+    for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+      var c = parseRgb(getComputedStyle(n).backgroundColor);
+      if (c && c.a > 0.05) { layers.push(c); if (c.a >= .95) break; }
+    }
+    var out = base;
+    for (var i = layers.length - 1; i >= 0; i--) out = mix(layers[i], out);
+    return out;
+  }
+  function hasText(el) {
+    for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && c.nodeValue.trim()) return true;
+    return false;
+  }
+  function guardRun() {
+    if (!guardOn || document.hidden) return;
+    var base = parseRgb(getComputedStyle(document.body).backgroundColor);
+    if (!base || base.a < .5) base = { r: 0, g: 0, b: 0, a: 1 };
+    var all = document.body.getElementsByTagName("*"), done = 0;
+    for (var i = 0; i < all.length && done < 600; i++) {
+      var el = all[i];
+      if (el.closest && el.closest("svg,canvas,video,img,pre code,.hljs")) continue;
+      if (!hasText(el)) continue;
+      var cs = getComputedStyle(el), key = cs.color + "|" + cs.backgroundColor;
+      if (guardSeen.get(el) === key) continue;
+      done++;
+      var fg = parseRgb(cs.color); if (!fg) { guardSeen.set(el, key); continue; }
+      var bg = bgOf(el, base), f = mix(fg, bg), op = parseFloat(cs.opacity) || 1;
+      var a = lum(f), b = lum(bg), ratio = (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+      if (ratio < 4.5 && op > .2) {
+        el.style.setProperty("color", b < .4 ? "#ffffff" : "#111111", "important");
+        el.setAttribute("data-desk-readable", "");
+        cs = getComputedStyle(el);
+      }
+      guardSeen.set(el, cs.color + "|" + cs.backgroundColor);
+    }
+  }
+  function guardReset() {
+    [].forEach.call(document.querySelectorAll("[data-desk-readable]"), function (n) { n.style.removeProperty("color"); n.removeAttribute("data-desk-readable"); });
+    guardSeen = new WeakMap();
+  }
+  setInterval(function () { try { guardRun(); } catch (e) {} }, 2000);
+
   var currentPayload = null, forcedLight = false;
   function cssFor(p) {
     var r = resolvePalette(p), pal = r.pal, css = "";
@@ -322,6 +386,12 @@
 
   function applyTheme(p) {
     currentPayload = p;
+    try {
+      var rp = resolvePalette(p);
+      guardReset();
+      guardOn = !!rp.pal.dark && !rp.pal.light;
+      if (guardOn) setTimeout(function () { try { guardRun(); } catch (e) {} }, 400);
+    } catch (e) {}
     if (window.__deskFilesSetting) window.__deskFilesSetting(p.filesPanel !== false);
     var out = cssFor(p);
     var el = document.getElementById("desk-theme");

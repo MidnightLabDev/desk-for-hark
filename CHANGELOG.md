@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.8
+
+**Fixed**
+- Faint grey text on dark themes (sidebar items, card text, link captions). Every dark theme now keeps all text levels white or near-white.
+- New readable-text guard: on dark themes, any text that is still too faint against its background (below 4.5:1 contrast) is turned white. Hark's light mode keeps dark text.
+
 ## 1.6.7
 
 **New**
