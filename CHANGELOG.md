@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+
+**Fixed**
+- The whole window froze when clicking **Download** in Hark's file preview. Downloads now run in the background: stored files are fetched by the app, and files Hark builds in the page are handed over and saved off the window's thread.
+- "Saved to Downloads" and other notifications are shown from a background thread, so they can never hold up the window.
+
 ## 1.6.9
 
 **Fixed**

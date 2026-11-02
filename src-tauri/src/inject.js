@@ -173,6 +173,54 @@
   // saved, other pages open as usual. Files Hark builds in the page
   // (blob: or data: links) are saved through the normal download path.
   var realOpen = window.open;
+  // Saving goes through the app's background downloader, never through
+  // WebView2's own download (that locked the whole window on Hark's
+  // preview Download). Stored files are fetched by the app; files built in
+  // the page are handed over as bytes. Returns false to fall back.
+  function bytesB64(buf) {
+    var u8 = new Uint8Array(buf), s = "", CH = 0x8000;
+    for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+    return btoa(s);
+  }
+  function nameFrom(u, name, type) {
+    if (name) return name;
+    try { var last = decodeURIComponent(new URL(u, location.href).pathname.split("/").pop() || ""); if (/\.\w{1,8}$/.test(last)) return last; } catch (e) {}
+    var ext = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf", "text/plain": ".txt", "application/zip": ".zip" }[(type || "").split(";")[0]] || "";
+    return "download" + ext;
+  }
+  function deskSave(u, name, fallback) {
+    if (!isHark) return false;
+    u = String(u || "");
+    var abs; try { abs = new URL(u, location.href).href; } catch (e) { return false; }
+    if (isStorage(abs)) {
+      invoke("download_file", { url: abs }).then(function (ok) { if (!ok && fallback) fallback(); }, function () { if (fallback) fallback(); });
+      return true;
+    }
+    if (/^(blob|data):/i.test(abs)) {
+      realFetch.call(window, abs).then(function (r) { return r.blob(); }).then(function (b) {
+        return b.arrayBuffer().then(function (buf) { return invoke("save_bytes", { name: nameFrom(abs, name, b.type), data: bytesB64(buf) }); });
+      }).then(function (ok) { if (!ok && fallback) fallback(); }, function () { if (fallback) fallback(); });
+      return true;
+    }
+    return false;
+  }
+  var realAClick = HTMLAnchorElement.prototype.click;
+  function wantsSave(a) {
+    if (!a || a.__deskPass) return false;
+    var h = a.getAttribute("href") || "";
+    return a.hasAttribute("download") && (/^(blob|data):/i.test(h) || isStorage(h));
+  }
+  function passClick(a) { a.__deskPass = true; try { realAClick.call(a); } finally { setTimeout(function () { a.__deskPass = false; }, 0); } }
+  HTMLAnchorElement.prototype.click = function () {
+    var a = this;
+    if (wantsSave(a) && deskSave(a.href, a.getAttribute("download") || "", function () { passClick(a); })) return;
+    return realAClick.apply(this, arguments);
+  };
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest && e.target.closest("a[download]");
+    if (!wantsSave(a)) return;
+    if (deskSave(a.href, a.getAttribute("download") || "", function () { passClick(a); })) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
   function saveBlob(u, name) {
     var a = document.createElement("a");
     a.href = u; a.download = name || "";

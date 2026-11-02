@@ -577,8 +577,15 @@ fn quit(app: &AppHandle) {
     app.exit(0);
 }
 
+/// Shows a Windows notification from a worker thread, so a notification
+/// never holds up the window (it used to run inside WebView2's download
+/// callbacks on the window's own thread).
 fn notify_text(app: &AppHandle, title: &str, body: &str) {
-    let _ = app.notification().builder().title(title).body(body).show();
+    let app = app.clone();
+    let (t, b) = (title.to_string(), body.to_string());
+    std::thread::spawn(move || {
+        let _ = app.notification().builder().title(t).body(b).show();
+    });
 }
 
 // -------------------------------------------------------------- tray/badge
@@ -1716,6 +1723,36 @@ fn download_file(app: AppHandle, url: String) -> bool {
     }
 }
 
+/// Saves a file Hark built in the page (a blob: or data: link) on a worker
+/// thread, so the window never waits on the download.
+#[tauri::command]
+fn save_bytes(app: AppHandle, name: String, data: String) -> bool {
+    let Ok(bytes) = B64.decode(data.as_bytes()) else { return false };
+    let name = safe_file_name(&name);
+    std::thread::spawn(move || {
+        let target = if settings(&app).ask_before_saving {
+            let mut dlg = app.dialog().file().set_file_name(&name);
+            if let Ok(d) = app.path().download_dir() {
+                dlg = dlg.set_directory(d);
+            }
+            match dlg.blocking_save_file().and_then(|fp| fp.into_path().ok()) {
+                Some(p) => p,
+                None => return,
+            }
+        } else {
+            let dir = app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir());
+            unique_file(&dir, &name)
+        };
+        let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
+        if fs::write(&target, &bytes).is_ok() {
+            notify_text(&app, "Saved to Downloads", &shown);
+        } else {
+            notify_text(&app, "Download failed", &shown);
+        }
+    });
+    true
+}
+
 #[tauri::command]
 fn get_theme(app: AppHandle) -> serde_json::Value {
     theme_payload(&app)
@@ -1935,6 +1972,7 @@ fn main() {
             get_theme,
             download_file,
             fetch_file,
+            save_bytes,
             title_bar,
             quick_submit,
             quick_hide,
