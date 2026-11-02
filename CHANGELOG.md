@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.2
+
+**Fixed**
+- **Download** in Hark's preview still froze or closed the window. Hark asks the browser's own "save file" picker, which hangs in the app's embedded window. The app now answers that request itself: the file goes straight to Downloads (or a Windows Save As dialog when **Ask where to save** is on), written in the background like right-click Save as.
+
 ## 1.7.1
 
 **Fixed**

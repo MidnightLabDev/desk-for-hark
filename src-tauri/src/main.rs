@@ -1767,7 +1767,7 @@ fn save_bytes(app: AppHandle, name: String, data: String) -> bool {
         };
         let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(name);
         if fs::write(&target, &bytes).is_ok() {
-            note_download("file from the page", &format!("saved as {shown}"));
+            note_download("file from the page (Hark's Download)", &format!("saved as {shown}"));
             notify_text(&app, "Saved to Downloads", &shown);
         } else {
             notify_text(&app, "Download failed", &shown);

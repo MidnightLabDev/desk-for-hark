@@ -233,6 +233,47 @@
     if (!wantsSave(a)) return;
     if (deskSave(a.href, a.getAttribute("download") || "", function () { passClick(a); })) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
+  // The browser's own "save file" picker can hang or crash the embedded
+  // window, so Hark gets a stand-in: what it writes is collected and saved
+  // by the app (straight to Downloads, or a Save As dialog when "Ask where
+  // to save" is on), off the window's thread.
+  if (isHark) {
+    var deskPicker = function (opts) {
+      var name = (opts && opts.suggestedName) || "download";
+      function writable() {
+        var parts = [], saved = false;
+        function save() {
+          if (saved) return Promise.resolve(); saved = true;
+          var b = new Blob(parts);
+          return b.arrayBuffer().then(function (buf) { return invoke("save_bytes", { name: nameFrom("", name, b.type), data: bytesB64(buf) }); })
+            .then(function () {}, function () { banner("Couldn't save " + name + ".", 4000); });
+        }
+        function add(d) {
+          if (d && typeof d === "object" && !(d instanceof Blob) && !(d instanceof ArrayBuffer) && !ArrayBuffer.isView(d) && "type" in d) {
+            if (d.type === "write") parts.push(d.data);
+            else if (d.type === "truncate" && d.size === 0) parts = [];
+          } else if (d != null) parts.push(d);
+        }
+        var ws = new WritableStream({ write: function (c) { add(c); }, close: save, abort: function () { parts = []; } });
+        ws.write = function (d) { add(d); return Promise.resolve(); };
+        ws.seek = function () { return Promise.resolve(); };
+        ws.truncate = function (n) { if (!n) parts = []; return Promise.resolve(); };
+        var nativeClose = WritableStream.prototype.close;
+        ws.close = function () { return save().then(function () { try { return nativeClose.call(ws); } catch (e) {} }).catch(function () {}); };
+        return ws;
+      }
+      var handle = {
+        kind: "file", name: name,
+        createWritable: function () { return Promise.resolve(writable()); },
+        getFile: function () { return Promise.resolve(new File([], name)); },
+        queryPermission: function () { return Promise.resolve("granted"); },
+        requestPermission: function () { return Promise.resolve("granted"); },
+        isSameEntry: function (o) { return Promise.resolve(o === handle); }
+      };
+      return Promise.resolve(handle);
+    };
+    try { Object.defineProperty(window, "showSaveFilePicker", { configurable: true, writable: true, value: deskPicker }); } catch (e) {}
+  }
   function saveBlob(u, name) {
     var a = document.createElement("a");
     a.href = u; a.download = name || "";
