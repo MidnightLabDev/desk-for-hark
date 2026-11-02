@@ -740,8 +740,8 @@
       mid.appendChild(el("div", "white-space:nowrap;overflow:hidden;text-overflow:ellipsis", f.name));
       mid.appendChild(el("div", "color:" + SUB + ";font-size:11px", [when(f.when), size(f.size)].filter(Boolean).join(" · ")));
       r.appendChild(mid);
-      var copy = el("button", btnCss() + ";font-size:12px", "⧉"); copy.title = "Copy name";
-      copy.onclick = function (e) { e.stopPropagation(); try { navigator.clipboard.writeText(f.name); copy.textContent = "✓"; setTimeout(function () { copy.textContent = "⧉"; }, 1200); } catch (x) {} };
+      var copy = el("button", btnCss() + ";font-size:12px", "⧉"); copy.title = "Ask in chat (asks Hark to send it again)";
+      copy.onclick = function (e) { e.stopPropagation(); askInChat(f); };
       var dl = el("button", btnCss(), "⤓"); dl.title = "Download to Downloads";
       dl.onclick = function (e) { e.stopPropagation(); download(f); };
       var chat = el("button", btnCss() + ";font-size:13px", "⌕"); chat.title = "Show in chat";
@@ -772,19 +772,47 @@
     function msgNode(id) {
       try { return document.querySelector('[data-message-id="' + CSS.escape(String(id)) + '"]'); } catch (e) { return null; }
     }
+    // The part of the page the chat scrolls in: the nearest scrolling
+    // parent of a message, else the tallest scrolling area outside the
+    // panel, else the page itself.
+    function scrolls(n) { return /(auto|scroll|overlay)/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight + 4; }
     function scroller() {
       var any = document.querySelector("[data-message-id]");
-      for (var n = any && any.parentElement; n && n !== document.body; n = n.parentElement) {
-        var cs = getComputedStyle(n);
-        if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 4) return n;
+      for (var n = any && any.parentElement; n && n !== document.body; n = n.parentElement) if (scrolls(n)) return n;
+      var best = null, all = document.querySelectorAll("main *, [role=main] *, body div");
+      for (var i = 0; i < all.length && i < 4000; i++) {
+        var c = all[i];
+        if (panel && panel.contains(c)) continue;
+        if (viewer && viewer.contains(c)) continue;
+        if (c.clientHeight < 200 || !scrolls(c)) continue;
+        if (!best || c.scrollHeight > best.scrollHeight) best = c;
       }
-      return null;
+      if (best) return best;
+      var se = document.scrollingElement || document.documentElement;
+      return se && se.scrollHeight > window.innerHeight + 4 ? se : null;
+    }
+    // Scrolls to the oldest end (Hark may lay the chat out bottom-up).
+    function toTop(sc) {
+      var rev = /column-reverse/.test(getComputedStyle(sc).flexDirection);
+      sc.scrollTop = rev ? -sc.scrollHeight : 0;
     }
     function flash(node) {
       node.scrollIntoView({ behavior: "smooth", block: "center" });
       var old = node.style.outline, oldOff = node.style.outlineOffset;
       node.style.outline = "2px solid rgba(127,127,255,.65)"; node.style.outlineOffset = "4px";
       setTimeout(function () { node.style.outline = old; node.style.outlineOffset = oldOff; }, 1800);
+    }
+    // Writes a request for the file into Hark's message box (you press Enter).
+    function askInChat(f) {
+      closeViewer();
+      var c = [].slice.call(document.querySelectorAll('textarea,[contenteditable="true"],[contenteditable=""],[role="textbox"]'))
+        .filter(function (n) { return visible(n) && !(panel && panel.contains(n)); });
+      c.sort(function (x, y) { return y.getBoundingClientRect().bottom - x.getBoundingClientRect().bottom; });
+      var box = c[0];
+      var text = "Please send me " + f.name + " again" + (f.when ? " (from " + day(f.when) + ")" : "") + ".";
+      if (!box) { try { navigator.clipboard.writeText(text); } catch (e) {} banner("Couldn't find the message box. The request is copied; paste it there.", 4000); return; }
+      setText(box, text);
+      try { box.focus(); } catch (e) {}
     }
     function day(t) { try { return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }); } catch (e) { return ""; } }
     function oldestLoaded() {
@@ -807,6 +835,10 @@
       function esc(e) { if (e.key === "Escape" && run === finding) { e.stopPropagation(); cancel(); } }
       document.addEventListener("keydown", esc, true);
       function done(msg) { document.removeEventListener("keydown", esc, true); if (msg) banner(msg, 4500); else if (bannerEl) bannerEl.style.display = "none"; }
+      function notFound() {
+        document.removeEventListener("keydown", esc, true);
+        banner("Couldn't find it in the chat. Ask Hark to send it again.", 9000, { label: "Ask in chat", fn: function () { askInChat(f); } });
+      }
       function progress() {
         var at = oldestLoaded();
         banner("Going back to " + (target ? day(target) : "that message") + "…" + (at ? "  Now at " + day(at) + "." : ""), 0, { label: "Cancel", fn: cancel });
@@ -817,9 +849,9 @@
         var n = msgNode(f.msg);
         if (n) { done(); flash(n); return; }
         var sc = scroller();
-        if (!sc) { done("Couldn't find the chat to scroll. Use Message in the viewer instead."); return; }
+        if (!sc) { notFound(); return; }
         var before = document.querySelectorAll("[data-message-id]").length, h = sc.scrollHeight;
-        sc.scrollTop = 0;
+        toTop(sc);
         var waited = 0;
         (function wait() {
           if (run !== finding) return;
@@ -828,8 +860,8 @@
           if (grew) { idle = 0; progress(); setTimeout(step, 120); return; }
           if ((waited += 150) < 2500) { setTimeout(wait, 150); return; }
           // Nothing new after a while: nudge once more, then give up.
-          if (++idle >= 3) { done("Reached the start of the chat without finding it. Use Message in the viewer to see it."); return; }
-          sc.scrollTop = 40; setTimeout(step, 200);
+          if (++idle >= 3) { notFound(); return; }
+          sc.scrollTop += /column-reverse/.test(getComputedStyle(sc).flexDirection) ? -40 : 40; setTimeout(step, 200);
         })();
       })();
     }
@@ -950,6 +982,9 @@
             try { navigator.clipboard.writeText(JSON.stringify(d, null, 2)); c.textContent = "✓  Copied"; } catch (x) {}
           };
           w.appendChild(c);
+          var ask = el("button", bcss, "⧉  Ask in chat");
+          ask.onclick = function () { askInChat(f); };
+          w.appendChild(ask);
         }
         body.appendChild(w);
       }

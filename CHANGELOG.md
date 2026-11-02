@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.7
+
+**New**
+- **⧉ Ask in chat** (was Copy name): writes "Please send me <file> again (from <date>)." into Hark's message box; you press Enter to send.
+- When Show in chat can't find a file, or the viewer can't open one, the banner/viewer offers **Ask in chat**.
+
+**Fixed**
+- Show in chat stopped at once with "Couldn't find the chat to scroll". It now finds the chat's scrolling area more reliably (including the page itself and bottom-up layouts).
+
 ## 1.6.6
 
 **Fixed**
