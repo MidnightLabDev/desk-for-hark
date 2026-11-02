@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.5
+
+- Save As is quicker: it opens as soon as you press Download, while the file is still coming in, instead of after the whole file has arrived.
+- Files are handed to the app as raw bytes instead of text-encoded, so big files save faster.
+
 ## 1.7.4
 
 - Every download now opens a Save As dialog (starting in Downloads), so you always choose where a file goes. The "Ask where to save downloads" setting is gone, since this is now how saving always works.

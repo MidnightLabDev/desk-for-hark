@@ -1739,6 +1739,86 @@ fn save_bytes(app: AppHandle, name: String, data: String) -> bool {
     true
 }
 
+/// Paths the user just picked in a Save As dialog. Only these may be
+/// written by the page, and each only once.
+static PICKED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Opens Save As (in Downloads) right away, while the page is still
+/// fetching the file, so the dialog appears without waiting on the download.
+#[tauri::command]
+async fn pick_save_path(app: AppHandle, name: String) -> Option<String> {
+    let name = safe_file_name(&name);
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let mut dlg = app.dialog().file().set_file_name(&name);
+        if let Ok(d) = app.path().download_dir() {
+            dlg = dlg.set_directory(d);
+        }
+        dlg.blocking_save_file().and_then(|fp| fp.into_path().ok())
+    })
+    .await
+    .ok()
+    .flatten()?;
+    let s = picked.to_string_lossy().to_string();
+    if let Ok(mut v) = PICKED.lock() {
+        v.push(s.clone());
+    }
+    Some(s)
+}
+
+fn take_picked(path: &str) -> bool {
+    match PICKED.lock() {
+        Ok(mut v) => match v.iter().position(|p| p == path) {
+            Some(i) => { v.remove(i); true }
+            None => false,
+        },
+        Err(_) => false,
+    }
+}
+
+fn write_saved(app: AppHandle, path: String, bytes: Vec<u8>) {
+    std::thread::spawn(move || {
+        let target = PathBuf::from(&path);
+        let shown = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if fs::write(&target, &bytes).is_ok() {
+            note_download("file from Hark's Download", &format!("saved as {shown}"));
+            notify_text(&app, "Saved", &shown);
+        } else {
+            note_download("file from Hark's Download", &format!("write failed: {shown}"));
+            notify_text(&app, "Download failed", &shown);
+        }
+    });
+}
+
+/// Writes a file's bytes, sent raw (no base64), to a path just picked.
+#[tauri::command]
+async fn write_raw(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<bool, String> {
+    let path = request
+        .headers()
+        .get("x-path")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .ok_or_else(|| "no path".to_string())?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("not raw".into());
+    };
+    if !take_picked(&path) {
+        return Err("path not picked".into());
+    }
+    write_saved(app, path, bytes.clone());
+    Ok(true)
+}
+
+/// Same as write_raw, for when raw bytes can't be sent (base64).
+#[tauri::command]
+fn write_bytes(app: AppHandle, path: String, data: String) -> bool {
+    let Ok(bytes) = B64.decode(data.as_bytes()) else { return false };
+    if !take_picked(&path) {
+        return false;
+    }
+    write_saved(app, path, bytes);
+    true
+}
+
 #[tauri::command]
 fn get_theme(app: AppHandle) -> serde_json::Value {
     theme_payload(&app)
@@ -1950,6 +2030,9 @@ fn main() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            pick_save_path,
+            write_raw,
+            write_bytes,
             note_result,
             notify,
             new_reply,

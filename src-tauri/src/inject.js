@@ -182,6 +182,21 @@
     for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
     return btoa(s);
   }
+  // Save As opens at once (while the file is still coming in), then the
+  // bytes go to the app raw, without base64, so saving is quick.
+  function writeTo(p, buf) {
+    var t = window.__TAURI_INTERNALS__;
+    return Promise.resolve().then(function () {
+      return t.invoke("write_raw", new Uint8Array(buf), { headers: { "x-path": encodeURIComponent(p) } });
+    }).catch(function () { return invoke("write_bytes", { path: p, data: bytesB64(buf) }); });
+  }
+  function pickAndWrite(name, bufPromise) {
+    var pick = invoke("pick_save_path", { name: name });
+    return Promise.all([pick, bufPromise]).then(function (r) {
+      if (!r[0]) return true; // cancelled
+      return writeTo(r[0], r[1]);
+    });
+  }
   function nameFrom(u, name, type) {
     if (name) return name;
     try { var last = decodeURIComponent(new URL(u, location.href).pathname.split("/").pop() || ""); if (/\.\w{1,8}$/.test(last)) return last; } catch (e) {}
@@ -202,14 +217,13 @@
         var ct = r.headers.get("content-type") || "";
         if (!r.ok || /text\/html/i.test(ct)) throw new Error("page");
         var cd = r.headers.get("content-disposition") || "", m = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
-        return r.blob().then(function (b) { return b.arrayBuffer().then(function (buf) {
-          return invoke("save_bytes", { name: nameFrom(abs, name || (m ? decodeURIComponent(m[1]) : ""), b.type), data: bytesB64(buf) }); }); });
+        return pickAndWrite(nameFrom(abs, name || (m ? decodeURIComponent(m[1]) : ""), ct), r.arrayBuffer());
       }).then(function (ok) { if (!ok && fallback) fallback(); }, function () { if (fallback) fallback(); });
       return true;
     }
     if (/^(blob|data):/i.test(abs)) {
       realFetch.call(window, abs).then(function (r) { return r.blob(); }).then(function (b) {
-        return b.arrayBuffer().then(function (buf) { return invoke("save_bytes", { name: nameFrom(abs, name, b.type), data: bytesB64(buf) }); });
+        return pickAndWrite(nameFrom(abs, name, b.type), b.arrayBuffer());
       }).then(function (ok) { if (!ok && fallback) fallback(); }, function () { if (fallback) fallback(); });
       return true;
     }
@@ -240,12 +254,18 @@
   if (isHark) {
     var deskPicker = function (opts) {
       var name = (opts && opts.suggestedName) || "download";
+      return invoke("pick_save_path", { name: name }).then(function (path) {
+        if (!path) throw new DOMException("The user aborted a request.", "AbortError");
+        return makeHandle(name, path);
+      });
+    };
+    var makeHandle = function (name, path) {
       function writable() {
         var parts = [], saved = false;
         function save() {
           if (saved) return Promise.resolve(); saved = true;
           var b = new Blob(parts);
-          return b.arrayBuffer().then(function (buf) { return invoke("save_bytes", { name: nameFrom("", name, b.type), data: bytesB64(buf) }); })
+          return b.arrayBuffer().then(function (buf) { return writeTo(path, buf); })
             .then(function () {}, function () { banner("Couldn't save " + name + ".", 4000); });
         }
         function add(d) {
@@ -270,7 +290,7 @@
         requestPermission: function () { return Promise.resolve("granted"); },
         isSameEntry: function (o) { return Promise.resolve(o === handle); }
       };
-      return Promise.resolve(handle);
+      return handle;
     };
     try { Object.defineProperty(window, "showSaveFilePicker", { configurable: true, writable: true, value: deskPicker }); } catch (e) {}
   }
@@ -302,9 +322,7 @@
       if (!r.ok) { note(abs, "HTTP " + r.status + ", opened in your browser"); quiet(invoke("open_external", { url: abs })); return; }
       if (/text\/html/i.test(ct)) { quiet(invoke("open_external", { url: abs })); return; }
       var cd = r.headers.get("content-disposition") || "", m = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
-      return r.blob().then(function (b) { return b.arrayBuffer().then(function (buf) {
-        return invoke("save_bytes", { name: nameFrom(abs, m ? decodeURIComponent(m[1]) : "", b.type), data: bytesB64(buf) });
-      }); });
+      return pickAndWrite(nameFrom(abs, m ? decodeURIComponent(m[1]) : "", ct), r.arrayBuffer());
     }).catch(function (e) { note(abs, "page fetch failed (" + (e && e.message || e) + "), opened in your browser"); quiet(invoke("open_external", { url: abs })); });
   };
   window.open = function (url, name, features) {
