@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.7
+
+- Hark's "can't hear your microphone" warning no longer sticks after dictation works. Bluetooth headsets (such as Jabra Link dongles) are silent for a moment while they switch on, which set off the warning and left it on screen. The app now hides it once real sound comes through or dictated text appears, and a click on the warning closes it. Only the mic level is checked; nothing is recorded or sent.
+
 ## 1.7.6
 
 - Save As opens faster: the app keeps Windows' Save dialog ready from launch instead of starting it from scratch each time.

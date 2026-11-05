@@ -784,6 +784,77 @@
     else banner("Couldn't find Hark's voice button. You can set it in Settings.", 4000);
   };
 
+  // ---- Stale "can't hear your microphone" warning -------------------------
+  // Bluetooth headsets (e.g. Jabra Link) are silent for a moment while they
+  // switch to headset mode, which trips Hark's silence check; the warning then
+  // stays up even after sound arrives. The app listens to the same mic stream
+  // (level only, nothing is recorded or sent) and hides the warning once real
+  // sound comes through, the composer gets dictated text, or you click it.
+  if (isHark && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    var heardAt = 0;
+    var md = navigator.mediaDevices, realGUM = md.getUserMedia.bind(md);
+    var watchLevel = function (stream) {
+      try {
+        if (!stream || !stream.getAudioTracks().length) return;
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        var ctx = new AC(), src = ctx.createMediaStreamSource(stream), an = ctx.createAnalyser();
+        an.fftSize = 512; src.connect(an);
+        var buf = new Float32Array(an.fftSize);
+        var iv = setInterval(function () {
+          var live = stream.getAudioTracks().some(function (t) { return t.readyState === "live"; });
+          if (!live) { clearInterval(iv); try { ctx.close(); } catch (e) {} return; }
+          if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
+          an.getFloatTimeDomainData(buf);
+          var s = 0; for (var i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+          if (Math.sqrt(s / buf.length) > 0.01) heardAt = Date.now();
+        }, 200);
+      } catch (e) {}
+    };
+    md.getUserMedia = function (c) {
+      return realGUM(c).then(function (st) { if (c && c.audio) watchLevel(st); return st; });
+    };
+    var micWarn = /can.?t hear your microphone/i;
+    var warnBox = function (el) {
+      var box = el.closest('[data-sonner-toast],[role="alert"],[role="status"],[data-radix-toast-root],li');
+      if (box) return box;
+      var n = el;
+      for (var k = 0; k < 6 && n && n !== document.body; k++) {
+        var p = getComputedStyle(n).position;
+        if (p === "fixed" || p === "absolute" || p === "sticky") return n;
+        n = n.parentElement;
+      }
+      return el.parentElement || el;
+    };
+    var shown = new WeakMap();
+    var composerText = function () {
+      var c = document.querySelector("textarea, [contenteditable='true']");
+      return c ? (c.value != null ? c.value : c.textContent || "") : "";
+    };
+    setInterval(function () {
+      if (!document.body || document.body.textContent.indexOf("hear your microphone") < 0) return;
+      var all = document.body.querySelectorAll("div,p,span,h1,h2,h3,h4,strong,li,section");
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.children.length > 3 || !micWarn.test(el.textContent || "") || (el.textContent || "").length > 400) continue;
+        if (el.querySelector && Array.prototype.some.call(el.children, function (ch) { return micWarn.test(ch.textContent || ""); })) continue;
+        var box = warnBox(el);
+        if (box.__deskHidden) continue;
+        var st = shown.get(box);
+        if (!st) {
+          st = { at: Date.now(), text: composerText() };
+          shown.set(box, st);
+          box.addEventListener("click", function () { this.style.display = "none"; this.__deskHidden = true; }, true);
+        }
+        var age = Date.now() - st.at;
+        if ((heardAt > st.at && age > 600) || (age > 600 && composerText() !== st.text)) {
+          box.style.display = "none";
+          box.__deskHidden = true;
+        }
+      }
+    }, 500);
+  }
+
   // ---- Small banner (offline, hints) ----------------------------------------
   var bannerEl = null, bannerTimer = null;
   function banner(text, ms, action) {
