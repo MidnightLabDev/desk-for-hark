@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.9
+
+- Google sign-in no longer stops after the password with Google's "400. That's an error." page. Google hops through other addresses while it signs you in (country domains such as google.ae, and gstatic, youtube), and the app was sending those to your browser, which broke the sign-in halfway. All Google and Apple sign-in addresses now stay in the app window.
+
 ## 1.7.8
 
 - Fixed "This version of the Hark app cannot sign in with Google" (and Apple). Hark's page now treats any desktop app as Hark's own app and asks for a native sign-in sheet that Desk doesn't have. Desk now starts Hark's normal web sign-in itself when you press Continue with Google or Continue with Apple, and the sign-in page opens right in the window.

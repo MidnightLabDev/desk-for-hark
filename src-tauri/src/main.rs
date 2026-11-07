@@ -231,6 +231,32 @@ fn host_matches(host: &str, pattern: &str) -> bool {
     !pattern.is_empty() && (host == pattern || host.ends_with(&format!(".{pattern}")))
 }
 
+/// Google and Apple sign-in hop across many hosts (country domains such as
+/// accounts.google.ae, youtube, gstatic, icloud). All of them stay in the
+/// window, or the sign-in breaks halfway (Google answered "400").
+fn is_sign_in_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    let fixed = [
+        "gstatic.com",
+        "googleusercontent.com",
+        "googleapis.com",
+        "youtube.com",
+        "apple.com",
+        "icloud.com",
+        "cdn-apple.com",
+        "apple-cloudkit.com",
+    ];
+    if fixed.iter().any(|p| host_matches(&host, p)) {
+        return true;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if let Some(i) = labels.iter().position(|l| *l == "google") {
+        let rest = &labels[i + 1..];
+        return !rest.is_empty() && rest.len() <= 2 && rest.iter().all(|l| !l.is_empty() && l.len() <= 3);
+    }
+    false
+}
+
 fn is_internal(app: &AppHandle, url: &Url) -> bool {
     match url.scheme() {
         "http" | "https" => {}
@@ -238,7 +264,7 @@ fn is_internal(app: &AppHandle, url: &Url) -> bool {
         _ => return true,
     }
     let Some(host) = url.host_str() else { return true };
-    if INTERNAL_HOSTS.iter().any(|p| host_matches(host, p)) {
+    if INTERNAL_HOSTS.iter().any(|p| host_matches(host, p)) || is_sign_in_host(host) {
         return true;
     }
     let extra = settings(app).extra_internal_hosts;
