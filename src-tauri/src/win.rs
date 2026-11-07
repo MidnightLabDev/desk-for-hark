@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
-    take_pwstr, DownloadStartingEventHandler, ExecuteScriptCompletedHandler, NavigationCompletedEventHandler, StateChangedEventHandler,
+    take_pwstr, ContextMenuRequestedEventHandler, DownloadStartingEventHandler, ExecuteScriptCompletedHandler, NavigationCompletedEventHandler, StateChangedEventHandler,
     PermissionRequestedEventHandler, ProcessFailedEventHandler,
 };
 use windows::core::{Interface, HSTRING, PWSTR};
@@ -250,6 +250,20 @@ pub struct HookOptions {
     pub popup: Option<String>,
 }
 
+/// The image / link / media addresses under the last right-click, and when.
+/// WebView2's own "Save image as" already shows a Save dialog, so a download
+/// of one of these right after doesn't get a second one from the app.
+static CONTEXT_SAVE: std::sync::Mutex<Option<(std::time::Instant, Vec<String>)>> =
+    std::sync::Mutex::new(None);
+
+fn from_context_menu(uri: &str) -> bool {
+    let Ok(g) = CONTEXT_SAVE.lock() else { return false };
+    match g.as_ref() {
+        Some((at, uris)) => at.elapsed().as_secs() < 120 && uris.iter().any(|u| u == uri),
+        None => false,
+    }
+}
+
 /// Registers WebView2 event handlers on the main window.
 pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
     let app = window.app_handle().clone();
@@ -363,6 +377,30 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
         // to the Downloads folder, WebView2's own download bubble stays
         // hidden, and a notification says when it's saved. With "Ask where
         // to save" on, a normal Save dialog comes up instead.
+        if let Ok(core11) = core.cast::<ICoreWebView2_11>() {
+            let h = ContextMenuRequestedEventHandler::create(Box::new(move |_sender, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut uris = Vec::new();
+                if let Ok(t) = args.ContextMenuTarget() {
+                    let mut p = PWSTR::null();
+                    if t.SourceUri(&mut p).is_ok() {
+                        let s = take_pwstr(p);
+                        if !s.is_empty() { uris.push(s); }
+                    }
+                    let mut p = PWSTR::null();
+                    if t.LinkUri(&mut p).is_ok() {
+                        let s = take_pwstr(p);
+                        if !s.is_empty() { uris.push(s); }
+                    }
+                }
+                if let Ok(mut g) = CONTEXT_SAVE.lock() {
+                    *g = Some((std::time::Instant::now(), uris));
+                }
+                Ok(())
+            }));
+            let _ = core11.add_ContextMenuRequested(&h, &mut token);
+        }
+
         if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
             let app_dl = app.clone();
             let ask = opts.ask_before_saving;
@@ -410,6 +448,16 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
                         let _ = op.add_StateChanged(&sh, &mut t);
                     }
                     return Ok(());
+                }
+
+                // Right-click "Save image as" / "Save link as": WebView2 already
+                // asked where to save, so keep its choice and don't ask twice.
+                if let Ok(op) = args.DownloadOperation() {
+                    let mut u = PWSTR::null();
+                    if op.Uri(&mut u).is_ok() && from_context_menu(&take_pwstr(u)) {
+                        if let Ok(mut g) = CONTEXT_SAVE.lock() { *g = None; }
+                        return Ok(());
+                    }
                 }
 
                 let deferral = args.GetDeferral()?;

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.10
+
+- Right-click > "Save image as" (and "Save link as") no longer opens the Save dialog twice. WebView2 already asks where to save for these, so the app now keeps that choice instead of asking again. Other downloads still always open Save As.
+
 ## 1.7.9
 
 - Google sign-in no longer stops after the password with Google's "400. That's an error." page. Google hops through other addresses while it signs you in (country domains such as google.ae, and gstatic, youtube), and the app was sending those to your browser, which broke the sign-in halfway. All Google and Apple sign-in addresses now stay in the app window.
