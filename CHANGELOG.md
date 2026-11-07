@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.12
+
+- Right-click > "Save image as" really asks only once now. 1.7.10 matched the download to the right-clicked image by address, but the download's address often differs (a storage redirect or encoding), so the second dialog still came up. Now the download that follows a right-click on an image, link or media (within 90 seconds) keeps the place you picked in Windows' dialog. Tray > Notification status notes when this happens.
+
 ## 1.7.11
 
 - Preview before you download. Opening a file Hark sent (web pages, code like .tsx/.ts/.js/.py, text, Markdown, JSON, CSV, images, PDF, audio, video) now shows it in the app's viewer first, like Hark's site opens it in a tab, instead of going straight to Save As.

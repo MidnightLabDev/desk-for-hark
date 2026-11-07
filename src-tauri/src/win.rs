@@ -256,10 +256,13 @@ pub struct HookOptions {
 static CONTEXT_SAVE: std::sync::Mutex<Option<(std::time::Instant, Vec<String>)>> =
     std::sync::Mutex::new(None);
 
-fn from_context_menu(uri: &str) -> bool {
+/// True when an image, link or media was right-clicked in the last 90 s.
+/// The download's address often differs from the right-clicked one (a
+/// storage redirect, encoding, blob:), so only the timing is checked.
+fn from_context_menu() -> bool {
     let Ok(g) = CONTEXT_SAVE.lock() else { return false };
     match g.as_ref() {
-        Some((at, uris)) => at.elapsed().as_secs() < 120 && uris.iter().any(|u| u == uri),
+        Some((at, uris)) => at.elapsed().as_secs() < 90 && !uris.is_empty(),
         None => false,
     }
 }
@@ -394,7 +397,7 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
                     }
                 }
                 if let Ok(mut g) = CONTEXT_SAVE.lock() {
-                    *g = Some((std::time::Instant::now(), uris));
+                    *g = if uris.is_empty() { None } else { Some((std::time::Instant::now(), uris)) };
                 }
                 Ok(())
             }));
@@ -452,12 +455,10 @@ pub fn install_webview_hooks(window: &WebviewWindow, opts: HookOptions) {
 
                 // Right-click "Save image as" / "Save link as": WebView2 already
                 // asked where to save, so keep its choice and don't ask twice.
-                if let Ok(op) = args.DownloadOperation() {
-                    let mut u = PWSTR::null();
-                    if op.Uri(&mut u).is_ok() && from_context_menu(&take_pwstr(u)) {
-                        if let Ok(mut g) = CONTEXT_SAVE.lock() { *g = None; }
-                        return Ok(());
-                    }
+                if from_context_menu() {
+                    if let Ok(mut g) = CONTEXT_SAVE.lock() { *g = None; }
+                    crate::note_download(&name, "right-click Save as: kept Windows' choice, no second dialog");
+                    return Ok(());
                 }
 
                 let deferral = args.GetDeferral()?;
