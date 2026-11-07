@@ -784,6 +784,42 @@
     else banner("Couldn't find Hark's voice button. You can set it in Settings.", 4000);
   };
 
+  // ---- Google / Apple sign-in ---------------------------------------------
+  // Hark's page thinks any Tauri app is Hark's own desktop app and hands
+  // Google/Apple sign-in to that app's native sign-in sheet, which this app
+  // doesn't have ("This version of the Hark app cannot sign in with Google").
+  // So the app starts the normal web sign-in itself, the same request Hark's
+  // website sends in a browser, and the provider's page opens in this window.
+  if (isHark) {
+    var signingIn = false;
+    document.addEventListener("click", function (e) {
+      var el = e.target && e.target.closest && e.target.closest("button,a,[role=button]");
+      if (!el) return;
+      var m = /continue with (google|apple)/i.exec((el.textContent || "") + " " + (el.getAttribute("aria-label") || ""));
+      if (!m) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (signingIn) return;
+      signingIn = true;
+      var provider = m[1].toLowerCase();
+      var label = provider === "google" ? "Google" : "Apple";
+      banner("Opening " + label + " sign-in…", 4000);
+      fetch("/api/auth/sign-in/social", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: provider, callbackURL: location.origin + "/", errorCallbackURL: location.href })
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok || !j || !j.url) throw new Error((j && (j.message || j.code)) || ("HTTP " + r.status));
+          location.href = j.url;
+        });
+      }).catch(function (err) {
+        signingIn = false;
+        banner("Couldn't start " + label + " sign-in (" + (err && err.message || err) + "). You can sign in with your email instead.", 8000);
+      });
+    }, true);
+  }
+
   // ---- Stale "can't hear your microphone" warning -------------------------
   // Bluetooth headsets (e.g. Jabra Link) are silent for a moment while they
   // switch to headset mode, which trips Hark's silence check; the warning then

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.8
+
+- Fixed "This version of the Hark app cannot sign in with Google" (and Apple). Hark's page now treats any desktop app as Hark's own app and asks for a native sign-in sheet that Desk doesn't have. Desk now starts Hark's normal web sign-in itself when you press Continue with Google or Continue with Apple, and the sign-in page opens right in the window.
+
 ## 1.7.7
 
 - Hark's "can't hear your microphone" warning no longer sticks after dictation works. Bluetooth headsets (such as Jabra Link dongles) are silent for a moment while they switch on, which set off the warning and left it on screen. The app now hides it once real sound comes through or dictated text appears, and a click on the warning closes it. Only the mic level is checked; nothing is recorded or sent.

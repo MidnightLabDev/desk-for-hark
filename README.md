@@ -26,6 +26,7 @@ Windows 10 (1809+) or Windows 11, 64-bit. It installs to `C:\Program Files\Desk 
 - **Quick Ask**: `Alt+Shift+Space` opens a small floating box. Type, press Enter, and it goes straight to Hark.
 - **Screenshot to Hark**: `Alt+Shift+S` lets you snip any part of the screen and attaches it to your message.
 - **Send selection**: select text in any app, press `Alt+Shift+C`, and it lands in Hark's message box. Your clipboard is put back afterwards.
+- **Sign in with Google or Apple**: works inside the app. Hark's page treats any desktop app as Hark's own and asks it for a native sign-in that this app doesn't have, so the app starts Hark's normal web sign-in instead and the Google or Apple page opens in the window.
 - **Voice**: `Alt+Shift+V` presses Hark's voice button, and the microphone is allowed for app.hark.com so there's no prompt. If Hark's "can't hear your microphone" warning sticks around after dictation starts working (common with Bluetooth headsets that are silent for a moment while they connect), the app hides it once sound comes through or text appears, and a click on it closes it too. The app only checks the mic level for this; nothing is recorded or sent.
 - **Send to**: right-click any file in Explorer, then **Send to > Desk for Hark** to attach it (turn this on from the tray or Settings).
 - **Jump list**: right-click the taskbar icon for Quick Ask, Screenshot, Open Hark and Settings.
