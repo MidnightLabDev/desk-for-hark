@@ -322,13 +322,22 @@
   function openReal(u, name, features) {
     u = String(u || "");
     if (/^(blob|data):/i.test(u)) { saveBlob(u, ""); return null; }
-    if (isStorage(u) && deskSave(u, "", function () { realOpen.call(window, u, name, features); })) return null;
+    if (isStorage(u)) { window.__deskOpenStorage(u); return null; }
     if (isHark && hkHost(u)) { window.__deskOpenInternal(u); return null; }
     return realOpen.call(window, u, name, features);
   }
   // A new window Hark asks for on its own address is never built (that
   // froze the app). The page fetches it with its own session instead:
   // a file is saved, a real page opens in the browser.
+  // A Hark file opened on its own (not with Download) is shown in Desk's
+  // viewer first, like Hark's site opens it in a tab. Download right before
+  // it (within 4 s) still saves straight away.
+  window.__deskOpenStorage = function (u) {
+    u = String(u || "");
+    var justPressed = pressT && Date.now() - pressT < 4000;
+    if (!justPressed && window.__deskPreview && window.__deskPreview(u)) return;
+    if (!deskSave(u, "")) quiet(invoke("download_file", { url: u }));
+  };
   function hkHost(u) { try { return /(^|\.)hark\.com$/.test(new URL(u, location.href).hostname); } catch (e) { return false; } }
   function note(what, res) { quiet(invoke("note_result", { what: String(what).split("?")[0], result: res })); }
   window.__deskOpenInternal = function (u) {
@@ -340,7 +349,12 @@
       if (!r.ok) { note(abs, "HTTP " + r.status + ", opened in your browser"); quiet(invoke("open_external", { url: abs })); return; }
       if (/text\/html/i.test(ct)) { quiet(invoke("open_external", { url: abs })); return; }
       var cd = r.headers.get("content-disposition") || "", m = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
-      return pickAndWrite(nameFrom(abs, m ? decodeURIComponent(m[1]) : "", ct), r.arrayBuffer());
+      var nm = nameFrom(abs, m ? decodeURIComponent(m[1]) : "", ct);
+      var justPressed = pressT && Date.now() - pressT < 4000;
+      if (!justPressed && window.__deskCanPreview && window.__deskCanPreview(nm, ct)) {
+        return r.blob().then(function (b) { window.__deskPreview(abs, nm, ct, b); });
+      }
+      return pickAndWrite(nm, r.arrayBuffer());
     }).catch(function (e) { note(abs, "page fetch failed (" + (e && e.message || e) + "), opened in your browser"); quiet(invoke("open_external", { url: abs })); });
   };
   window.open = function (url, name, features) {
@@ -1229,7 +1243,8 @@
       for (var i = 0; i < n; i++) a[i] = bin.charCodeAt(i);
       return new Blob([a], { type: type || "application/octet-stream" });
     }
-    function fetchFile(u) {
+    function fetchFile(u, f) {
+      if (f && f.blob) return Promise.resolve(f.blob);
       var tried = [];
       function fail(status) { var e = new Error(tried.join("; ")); e.status = status; e.tried = tried; e.addr = safeAddr(u); throw e; }
       var pageStatus = 0;
@@ -1298,6 +1313,7 @@
       };
       var dl = el("button", btnCss(), "⤓"); dl.title = "Download to Downloads"; dl.onclick = function () { download(f); };
       var x = el("button", btnCss(), "✕"); x.title = "Close (Esc)"; x.onclick = closeViewer;
+      if (f.adhoc) { info.style.display = "none"; chat.style.display = "none"; dl.title = "Download (Save As)"; }
       head.appendChild(info); head.appendChild(chat); head.appendChild(dl); head.appendChild(x);
       var body = el("div", "flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center");
       box.appendChild(head); box.appendChild(body); viewer.appendChild(box); document.body.appendChild(viewer);
@@ -1341,18 +1357,18 @@
         m.onerror = function () {
           if (viaBlob) { note("Couldn't preview this file.", true, { tried: ["the file loaded but couldn't be shown"] }); return; }
           viaBlob = true;
-          fetchFile(u).then(function (b) {
+          fetchFile(u, f).then(function (b) {
             if (!viewer) return;
             viewerUrl = URL.createObjectURL(b);
             m.src = viewerUrl;
             if (kind !== "image") { body.textContent = ""; body.appendChild(m); }
           }, failed);
         };
-        m.src = u;
+        if (f.blob) { viaBlob = true; viewerUrl = URL.createObjectURL(f.blob); m.src = viewerUrl; } else m.src = u;
         if (kind !== "image") { body.textContent = ""; body.appendChild(m); }
         return;
       }
-      fetchFile(u).then(function (b) {
+      fetchFile(u, f).then(function (b) {
         if (!viewer) return;
         if (kind === "pdf") {
           viewerUrl = URL.createObjectURL(new Blob([b], { type: "application/pdf" }));
@@ -1364,15 +1380,118 @@
         return (cut ? b.slice(0, 1500000) : b).arrayBuffer().then(function (buf) {
           if (!viewer) return;
           var txt = new TextDecoder("utf-8").decode(buf);
-          body.textContent = ""; body.style.alignItems = "stretch"; body.style.justifyContent = "stretch";
-          var pre = el("pre", "margin:0;padding:14px 16px;width:100%;box-sizing:border-box;white-space:pre-wrap;word-break:break-word;" +
-            "font:12.5px/1.55 'Cascadia Code',Consolas,monospace;unicode-bidi:plaintext", txt + (cut ? "\n\n… (preview cut at 1.5 MB; download for the whole file)" : ""));
-          pre.dir = "auto";
-          body.appendChild(pre);
+          showText(f, txt, cut, body, viewer);
         });
       }, failed);
     }
+    // Text, code and web pages. Code gets line numbers and light colours,
+    // added a few hundred lines at a time so the window never stalls. Web
+    // pages render in a locked frame with scripts off: nothing in the file
+    // can run, reach Hark or your sign-in, or hang the app.
+    var codeCss = false;
+    function addCodeCss() {
+      if (codeCss) return; codeCss = true;
+      var s = document.createElement("style");
+      s.textContent = ".dk-code{margin:0;padding:12px 0;counter-reset:dkln;font:12.5px/1.55 'Cascadia Code',Consolas,monospace;tab-size:2}" +
+        ".dk-code>span{display:block;padding:0 16px 0 0;white-space:pre-wrap;word-break:break-word;min-height:1.55em}" +
+        ".dk-code>span::before{counter-increment:dkln;content:counter(dkln);display:inline-block;width:3.4em;margin-right:14px;text-align:right;opacity:.38;user-select:none}" +
+        ".dk-k{color:#a371f7}.dk-s{color:#3fa66b}.dk-c{opacity:.55;font-style:italic}.dk-n{color:#e8833a}.dk-t{color:#4c8dea}";
+      (document.head || document.documentElement).appendChild(s);
+    }
+    function langOf(name) {
+      var e = (String(name).split(".").pop() || "").toLowerCase();
+      if (/^(txt|md|markdown|csv|tsv|log)$/.test(e)) return "";
+      if (/^(py|sh|bash|ya?ml|toml|rb|r|ps1|conf|cfg|ini)$/.test(e)) return "#";
+      if (/^(sql|lua)$/.test(e)) return "--";
+      if (/^(html?|xml|svg|vue|svelte)$/.test(e)) return "<";
+      return "//";
+    }
+    var KW = "const|let|var|function|return|if|else|elif|for|while|do|switch|case|break|continue|new|class|extends|import|from|export|default|async|await|try|catch|except|finally|throw|raise|typeof|instanceof|in|of|interface|type|enum|implements|public|private|protected|static|readonly|def|lambda|pass|with|as|None|True|False|null|undefined|true|false|this|self|fn|pub|struct|impl|use|mod|match|package|func|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|select|where|insert|update|delete|join";
+    function tokRx(lang) {
+      var c = lang === "#" ? "#.*$" : lang === "--" ? "--.*$" : lang === "<" ? "<!--.*?(?:-->|$)" : "\\/\\/.*$|\\/\\*.*?(?:\\*\\/|$)";
+      var t = lang === "<" ? "|(<\\/?[A-Za-z][\\w:-]*|\\/?>)" : "|()";
+      return new RegExp("(" + c + ")|(\"(?:[^\"\\\\]|\\\\.)*\"?|'(?:[^'\\\\]|\\\\.)*'?|`[^`]*`?)|\\b(\\d[\\d_.]*(?:e[+-]?\\d+)?)\\b|\\b(" + KW + ")\\b" + t, "g");
+    }
+    function paintLine(span, line, rx, state) {
+      if (state.block) {
+        var end = line.indexOf(state.block);
+        var cm = document.createElement("span"); cm.className = "dk-c";
+        if (end < 0) { cm.textContent = line; span.appendChild(cm); return; }
+        cm.textContent = line.slice(0, end + state.block.length); span.appendChild(cm);
+        line = line.slice(end + state.block.length); state.block = null;
+      }
+      rx.lastIndex = 0; var at = 0, mm;
+      while ((mm = rx.exec(line))) {
+        if (mm[0] === "") { rx.lastIndex++; continue; }
+        if (mm.index > at) span.appendChild(document.createTextNode(line.slice(at, mm.index)));
+        var s = document.createElement("span");
+        s.className = mm[1] ? "dk-c" : mm[2] ? "dk-s" : mm[3] ? "dk-n" : mm[4] ? "dk-k" : "dk-t";
+        s.textContent = mm[0]; span.appendChild(s); at = mm.index + mm[0].length;
+        if (mm[1] && /^\/\*/.test(mm[0]) && !/\*\/$/.test(mm[0])) state.block = "*/";
+        if (mm[1] && /^<!--/.test(mm[0]) && !/-->$/.test(mm[0])) state.block = "-->";
+      }
+      if (at < line.length) span.appendChild(document.createTextNode(line.slice(at)));
+    }
+    function codeView(txt, name, cut, alive) {
+      addCodeCss();
+      var pre = el("pre", ""); pre.className = "dk-code"; pre.dir = "ltr";
+      var lines = txt.split("\n"), lang = txt.length <= 400000 ? langOf(name) : "", rx = lang ? tokRx(lang) : null, state = { block: null }, i = 0;
+      (function chunk() {
+        if (!alive()) return;
+        var frag = document.createDocumentFragment(), stop = Math.min(lines.length, i + 400);
+        for (; i < stop; i++) {
+          var sp = document.createElement("span");
+          if (rx) paintLine(sp, lines[i], rx, state); else sp.textContent = lines[i];
+          frag.appendChild(sp);
+        }
+        pre.appendChild(frag);
+        if (i < lines.length) setTimeout(chunk, 0);
+        else if (cut) pre.appendChild(el("span", "opacity:.6;padding-top:10px", "… preview stops at 1.5 MB. Download for the whole file."));
+      })();
+      return pre;
+    }
+    function showText(f, txt, cut, body, mine) {
+      function alive() { return viewer === mine; }
+      body.textContent = ""; body.style.flexDirection = "column"; body.style.alignItems = "stretch"; body.style.justifyContent = "flex-start"; body.style.overflow = "hidden";
+      var isHtml = /\.html?$/i.test(f.name) || /text\/html/i.test(f.kind || "");
+      var bar = el("div", "display:flex;gap:6px;align-items:center;padding:7px 12px;border-bottom:1px solid " + LINE + ";flex:none");
+      var wrap = el("div", "flex:1;min-height:0;overflow:auto;width:100%;position:relative");
+      function tabBtn(label, on) { return el("button", "border:1px solid " + LINE + ";background:" + (on ? "rgba(127,127,127,.18)" : "transparent") + ";color:inherit;padding:4px 12px;border-radius:7px;cursor:pointer;font:inherit", label); }
+      function showSource() { wrap.textContent = ""; wrap.style.overflow = "auto"; wrap.appendChild(codeView(txt, f.name, cut, alive)); }
+      function showPage() {
+        wrap.textContent = ""; wrap.style.overflow = "hidden";
+        var fr = el("iframe", "display:block;width:100%;height:100%;border:0;background:#fff");
+        fr.setAttribute("sandbox", "");
+        fr.setAttribute("referrerpolicy", "no-referrer");
+        fr.srcdoc = txt.length > 3000000 ? txt.slice(0, 3000000) : txt;
+        wrap.appendChild(fr);
+      }
+      if (isHtml) {
+        var pv = tabBtn("Preview", true), src = tabBtn("Source", false);
+        pv.onclick = function () { pv.style.background = "rgba(127,127,127,.18)"; src.style.background = "transparent"; showPage(); };
+        src.onclick = function () { src.style.background = "rgba(127,127,127,.18)"; pv.style.background = "transparent"; showSource(); };
+        bar.appendChild(pv); bar.appendChild(src);
+        bar.appendChild(el("span", "color:" + SUB + ";font-size:11.5px;margin-left:6px", "Scripts are off in the preview"));
+      }
+      bar.appendChild(el("div", "flex:1"));
+      var cp = tabBtn("⧉  Copy", false);
+      cp.onclick = function () { try { navigator.clipboard.writeText(txt); cp.textContent = "✓  Copied"; setTimeout(function () { cp.textContent = "⧉  Copy"; }, 1500); } catch (e) {} };
+      bar.appendChild(cp);
+      body.appendChild(bar); body.appendChild(wrap);
+      if (isHtml) showPage(); else showSource();
+    }
+    // Opens any Hark file address in the viewer. Returns false for types it
+    // can't show, so the caller saves the file instead.
+    window.__deskCanPreview = function (name, type) { return kindOf({ name: String(name || ""), kind: String(type || "") }) !== "other"; };
+    window.__deskPreview = function (u, name, type, blob) {
+      var abs; try { abs = new URL(String(u || ""), location.href).href; } catch (e) { return false; }
+      var f = { key: "open:" + abs, name: nameFrom(abs, name || "", type || ""), url: abs, kind: type || (blob && blob.type) || "", blob: blob || null, adhoc: true };
+      if (kindOf(f) === "other") return false;
+      preview(f, true);
+      return true;
+    };
     function download(f) {
+      if (f.blob) { pickAndWrite(f.name, f.blob.arrayBuffer()); return; }
       function viaPage(u) {
         fetchFile(u)
           .then(function (b) { var o = URL.createObjectURL(b), a = el("a", "display:none"); a.href = o; a.download = f.name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(o); a.remove(); }, 4000); })

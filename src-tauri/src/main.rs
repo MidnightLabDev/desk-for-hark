@@ -296,6 +296,48 @@ const PREVIEW_EXTS: &[&str] = &[
     "mp3", "wav", "ogg", "m4a",
 ];
 
+/// Files Desk's own viewer shows before you download: everything above plus
+/// web pages, code and text (read as UTF-8, so Arabic and other scripts are
+/// right).
+const VIEW_EXTS: &[&str] = &[
+    "html", "htm", "txt", "md", "markdown", "csv", "tsv", "log", "json", "jsonl", "xml", "yml", "yaml",
+    "toml", "ini", "cfg", "conf", "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "rs", "go", "java",
+    "kt", "c", "h", "cpp", "hpp", "cs", "php", "swift", "sh", "bash", "ps1", "bat", "sql", "css", "scss",
+    "less", "vue", "svelte", "lua", "r", "dart", "gradle",
+];
+
+fn viewable(url: &Url) -> bool {
+    let last = url.path_segments().and_then(|s| s.last()).unwrap_or("");
+    let last = percent_decode(last);
+    let ext = Path::new(&last)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    !ext.is_empty() && (PREVIEW_EXTS.contains(&ext.as_str()) || VIEW_EXTS.contains(&ext.as_str()))
+}
+
+/// A Hark file that can be shown opens in Desk's viewer inside the page
+/// (like Hark's site opening it in a tab); anything else is saved. Never
+/// builds a window and never waits inside the navigation handler.
+fn open_storage(app: &AppHandle, url: &Url) {
+    if !viewable(url) {
+        download_url(app, url);
+        return;
+    }
+    let app = app.clone();
+    let url = url.clone();
+    note_download(&bare(&url), "shown in the viewer");
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(30));
+        let Some(w) = main_window(&app) else { return };
+        let u = serde_json::to_string(url.as_str()).unwrap_or_else(|_| "\"\"".into());
+        let js = format!(
+            "(function(u){{if(window.__deskOpenStorage)window.__deskOpenStorage(u);else window.__TAURI_INTERNALS__.invoke('download_file',{{url:u}});}})({u});"
+        );
+        let _ = w.eval(&js);
+    });
+}
+
 /// Hark's file storage hosts (any file type).
 fn is_storage_host(url: &Url) -> bool {
     let Some(host) = url.host_str() else { return false };
@@ -2175,7 +2217,7 @@ fn main() {
                 .initialization_script(INJECT_JS)
                 .on_navigation(move |url| {
                     if is_storage_host(url) {
-                        download_url(&nav_handle, url);
+                        open_storage(&nav_handle, url);
                         false
                     } else if is_internal(&nav_handle, url) {
                         true
@@ -2190,7 +2232,7 @@ fn main() {
                         .map(|h| AUTH_HOSTS.iter().any(|p| host_matches(h, p)))
                         .unwrap_or(false);
                     if is_storage_host(&url) {
-                        download_url(&popup_handle, &url);
+                        open_storage(&popup_handle, &url);
                         NewWindowResponse::Deny
                     } else if auth {
                         // Sign-in popups keep window.opener so OAuth can finish.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.11
+
+- Preview before you download. Opening a file Hark sent (web pages, code like .tsx/.ts/.js/.py, text, Markdown, JSON, CSV, images, PDF, audio, video) now shows it in the app's viewer first, like Hark's site opens it in a tab, instead of going straight to Save As.
+- Web pages (.html) show rendered, with a Source tab. Scripts are always off in the preview, so nothing in the file can run, reach Hark or your sign-in, or hang the window.
+- Code and text get line numbers, light colours and a Copy button. Big files are drawn a few hundred lines at a time (and cut at 1.5 MB) so the window stays responsive.
+- The viewer's ⤓ button saves with Save As. Pressing Hark's own Download still saves straight away, and files the viewer can't show (zip, docx…) are saved as before.
+- The file is read on a background thread; no new windows are built while a click is handled (the cause of the old freezes).
+
 ## 1.7.10
 
 - Right-click > "Save image as" (and "Save link as") no longer opens the Save dialog twice. WebView2 already asks where to save for these, so the app now keeps that choice instead of asking again. Other downloads still always open Save As.
