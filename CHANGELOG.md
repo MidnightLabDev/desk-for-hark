@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.13
+
+- **Usage quick view**: right-click the tray icon or the taskbar icon to see your Hark usage, like "Usage 62% · resets Nov 25", without opening Settings. Click it to open Hark's Usage and plan page. Hovering over the tray icon shows the same line.
+- The app reads the same usage summary Hark's Settings uses, inside your signed-in page, shortly after launch, every 5 minutes, and each time you open the tray menu. Nothing leaves your computer except that request to Hark.
+- Tray > Notification status shows the last usage line and what the summary contained, to help if the line looks wrong.
+
 ## 1.7.12
 
 - Right-click > "Save image as" really asks only once now. 1.7.10 matched the download to the right-clicked image by address, but the download's address often differs (a storage redirect or encoding), so the second dialog still came up. Now the download that follows a right-click on an image, link or media (within 90 seconds) keeps the place you picked in Windows' dialog. Tray > Notification status notes when this happens.

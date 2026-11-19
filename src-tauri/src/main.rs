@@ -1203,6 +1203,213 @@ fn set_sendto(app: &AppHandle, on: bool) -> bool {
     link.exists()
 }
 
+// ------------------------------------------------------------ usage view
+// Hark's Settings > Usage and plan reads GET /api/billing/summary. The app
+// reads the same summary inside the signed-in page every 5 minutes (and
+// when the tray menu is opened) and shows it in the tray menu, the tray
+// tooltip and the taskbar jump list.
+
+const USAGE_START_JS: &str = r#"(function(){var W=window;if(location.host!=='app.hark.com'||W.__deskUsageBusy)return 0;W.__deskUsageBusy=1;var f=W.__deskRealFetch||W.fetch;var m=document.querySelector('meta[name="hark-locale"]');var h={};if(m&&m.content)h['X-Hark-Locale']=m.content;f.call(W,'/api/billing/summary',{credentials:'include',headers:h}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){W.__deskUsage={ok:1,j:j,at:Date.now()};}).catch(function(e){W.__deskUsage={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskUsageBusy=0;});return 1;})()"#;
+const USAGE_READ_JS: &str = "(function(){return window.__deskUsage||null;})()";
+
+static USAGE_ITEM: std::sync::OnceLock<MenuItem<Wry>> = std::sync::OnceLock::new();
+static USAGE_TEXT: std::sync::Mutex<(String, String)> = std::sync::Mutex::new((String::new(), String::new()));
+static USAGE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn usage_status_line() -> String {
+    let g = USAGE_TEXT.lock().map(|g| g.clone()).unwrap_or_default();
+    let label = if g.0.is_empty() { "not checked yet".to_string() } else { g.0 };
+    if g.1.is_empty() { label } else { format!("{label}\nUsage summary seen: {}", g.1) }
+}
+
+const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/// "Nov 25" from an ISO date, or from Unix seconds / milliseconds.
+fn short_date(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        let b = s.as_bytes();
+        if b.len() >= 10 && b[4] == b'-' && b[7] == b'-' {
+            let mo: usize = s[5..7].parse().ok()?;
+            let d: u32 = s[8..10].parse().ok()?;
+            return MONTHS.get(mo.checked_sub(1)?).map(|m| format!("{m} {d}"));
+        }
+        return None;
+    }
+    let mut n = v.as_f64()?;
+    if n > 1e11 {
+        n /= 1000.0;
+    }
+    if n < 1e9 {
+        return None;
+    }
+    let days = (n / 86400.0).floor() as i64;
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    MONTHS.get((mo - 1) as usize).map(|m| format!("{m} {d}"))
+}
+
+/// Finds a usage percentage and a reset date anywhere in the summary.
+fn usage_label(j: &serde_json::Value) -> Option<String> {
+    let mut pct: Option<f64> = None;
+    let mut pair: Option<f64> = None;
+    let mut reset: Option<String> = None;
+    let mut plan: Option<String> = None;
+    fn walk(v: &serde_json::Value, d: u32, pct: &mut Option<f64>, pair: &mut Option<f64>, reset: &mut Option<String>, plan: &mut Option<String>) {
+        if d > 6 {
+            return;
+        }
+        match v {
+            serde_json::Value::Array(a) => a.iter().take(20).for_each(|x| walk(x, d + 1, pct, pair, reset, plan)),
+            serde_json::Value::Object(o) => {
+                let mut used = None;
+                let mut limit = None;
+                let mut left = None;
+                for (k, x) in o {
+                    let k = k.to_ascii_lowercase();
+                    if let Some(n) = x.as_f64() {
+                        if pct.is_none() && (k.contains("percent") || k.contains("pct")) {
+                            *pct = Some(if n <= 1.0 && n.fract() != 0.0 { n * 100.0 } else { n });
+                        } else if pct.is_none() && (k.contains("fraction") || k.contains("ratio")) && n <= 1.0 {
+                            *pct = Some(n * 100.0);
+                        } else if k.contains("used") || k.contains("spent") || k == "usage" || k.contains("consumed") {
+                            used = Some(n);
+                        } else if k.contains("limit") || k.contains("allowance") || k.contains("included") || k == "total" || k.contains("quota") || k == "max" {
+                            limit = Some(n);
+                        } else if k.contains("remaining") || k.contains("left") || k.contains("balance") {
+                            left = Some(n);
+                        }
+                    }
+                    if reset.is_none() && (k.contains("reset") || k.contains("periodend") || k.contains("period_end") || k.contains("renew") || k.contains("nextbilling") || k.contains("next_billing")) {
+                        *reset = short_date(x);
+                    }
+                    if plan.is_none() && (k == "plan" || k == "planname" || k == "plan_name" || k == "tier") {
+                        if let Some(s) = x.as_str() {
+                            *plan = Some(s.to_string());
+                        } else if let Some(s) = x.get("name").or_else(|| x.get("displayName")).and_then(|s| s.as_str()) {
+                            *plan = Some(s.to_string());
+                        }
+                    }
+                }
+                if pair.is_none() {
+                    if let Some(l) = limit.filter(|l| *l > 0.0) {
+                        if let Some(u) = used {
+                            *pair = Some(u / l * 100.0);
+                        } else if let Some(r) = left {
+                            *pair = Some((l - r) / l * 100.0);
+                        }
+                    }
+                }
+                for x in o.values() {
+                    if x.is_object() || x.is_array() {
+                        walk(x, d + 1, pct, pair, reset, plan);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(j, 0, &mut pct, &mut pair, &mut reset, &mut plan);
+    let p = pct.or(pair)?;
+    let p = p.clamp(0.0, 999.0).round() as i64;
+    let mut s = format!("Usage {p}%");
+    if let Some(r) = reset {
+        s.push_str(&format!(" · resets {r}"));
+    }
+    let _ = plan;
+    Some(s)
+}
+
+fn set_usage_label(app: &AppHandle, label: &str, raw: String) {
+    let changed = {
+        let Ok(mut g) = USAGE_TEXT.lock() else { return };
+        let changed = g.0 != label;
+        *g = (label.to_string(), raw);
+        changed
+    };
+    if !changed {
+        return;
+    }
+    if let Some(item) = USAGE_ITEM.get() {
+        let _ = item.set_text(label);
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(format!("Desk for Hark\n{label}")));
+    }
+    #[cfg(windows)]
+    {
+        win::set_jump_list(APP_ID, Some(label));
+    }
+}
+
+/// Starts a fresh read of the usage summary and shows it a few seconds later.
+#[cfg(windows)]
+fn usage_tick(app: &AppHandle) {
+    use std::sync::atomic::Ordering;
+    if USAGE_BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(w) = main_window(app) else {
+        USAGE_BUSY.store(false, Ordering::SeqCst);
+        return;
+    };
+    win::eval_page(&w, USAGE_START_JS, |_| {});
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(4));
+        let Some(w) = main_window(&app) else {
+            USAGE_BUSY.store(false, Ordering::SeqCst);
+            return;
+        };
+        let app2 = app.clone();
+        win::eval_page(&w, USAGE_READ_JS, move |res| {
+            USAGE_BUSY.store(false, Ordering::SeqCst);
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&res) else { return };
+            if v.is_null() {
+                return;
+            }
+            if v.get("ok").and_then(|x| x.as_i64()) == Some(1) {
+                let j = v.get("j").cloned().unwrap_or(serde_json::Value::Null);
+                let mut raw = j.to_string();
+                if raw.len() > 600 {
+                    let mut cut = 600;
+                    while !raw.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    raw.truncate(cut);
+                    raw.push('…');
+                }
+                let label = usage_label(&j).unwrap_or_else(|| "Usage: open Billing".to_string());
+                set_usage_label(&app2, &label, raw);
+            } else {
+                let err = v.get("err").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let label = if err.contains("401") || err.contains("403") { "Usage: sign in to Hark" } else { "Usage: open Billing" };
+                set_usage_label(&app2, label, format!("error {err}"));
+            }
+        });
+    });
+}
+
+/// Opens Hark's Usage and plan page in the window, without a reload when
+/// Hark's own router can take it.
+fn open_billing(app: &AppHandle) {
+    show_main(app);
+    eval_main(
+        app,
+        r#"(function(){var p='/settings/billing';if(location.host!=='app.hark.com'){location.assign('https://app.hark.com'+p);return;}if(location.pathname===p)return;history.pushState({},'',p);dispatchEvent(new PopStateEvent('popstate',{state:{}}));setTimeout(function(){if(location.pathname!==p)location.assign(p);},1500);})()"#,
+    );
+    #[cfg(windows)]
+    {
+        usage_tick(app);
+    }
+}
+
 // ---------------------------------------------------------- argument router
 
 fn handle_args(app: &AppHandle, args: &[String], first_launch: bool) {
@@ -1218,6 +1425,7 @@ fn handle_args(app: &AppHandle, args: &[String], first_launch: bool) {
             "--screenshot" => screenshot_to_hark(app),
             "--settings" => show_settings(app),
             "--show" => show_main(app),
+            "--usage" => open_billing(app),
             _ => {}
         }
     }
@@ -1757,8 +1965,9 @@ fn watch_status(app: &AppHandle) {
     let last_dl = if last_dl.is_empty() { "none yet".to_string() } else { last_dl };
     let timing = LAST_TIMING.lock().map(|s| s.clone()).unwrap_or_default();
     let timing = if timing.is_empty() { "none yet".to_string() } else { timing };
+    let usage = usage_status_line();
     let text = format!(
-        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications.\n\nLast download or link: {last_dl}\nLast download timing: {timing}"
+        "Hark unread checks: {s_checks} (last answer {s_ok}, error: {s_err})\nWaiting for you:\n{waiting}\nReply notifications shown: {s_notified}\n\nOpen-chat page checks (while hidden): {checks}, {len} characters, {notified} fallback notifications.\n\nLast download or link: {last_dl}\nLast download timing: {timing}\n\nUsage quick view: {usage}"
     );
     app.dialog().message(text).title("Notification status").kind(MessageDialogKind::Info).show(|_| {});
 }
@@ -2266,7 +2475,7 @@ fn main() {
                         popup: None,
                     },
                 );
-                win::set_jump_list(APP_ID);
+                win::set_jump_list(APP_ID, Some("Usage: checking…"));
                 if s.mica {
                     win::style_title_bar(&window, true, None, None, true);
                 }
@@ -2313,6 +2522,10 @@ fn main() {
                         if n % 2 == 0 {
                             status_tick(&awake, &w);
                         }
+                        // Usage summary: soon after launch, then every 5 minutes.
+                        if n == 4 || n % 200 == 0 {
+                            usage_tick(&awake);
+                        }
                     }
                 });
             }
@@ -2348,6 +2561,8 @@ fn main() {
             let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
             let sendto_on = sendto_link(&handle).map(|p| p.exists()).unwrap_or(false);
 
+            let usage_item = MenuItem::with_id(app, "usage", "Usage: checking…", true, None::<&str>)?;
+            let _ = USAGE_ITEM.set(usage_item.clone());
             let show_hide = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
             let quick = MenuItem::with_id(app, "quick", "Quick Ask…", true, None::<&str>)?;
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
@@ -2397,6 +2612,8 @@ fn main() {
             let menu = Menu::with_items(
                 app,
                 &[
+                    &usage_item,
+                    &PredefinedMenuItem::separator(app)?,
                     &show_hide,
                     &quick,
                     &shot,
@@ -2456,6 +2673,7 @@ fn main() {
                                 show_main(app);
                             }
                         }
+                        "usage" => open_billing(app),
                         "quick" => show_quick(app),
                         "screenshot" => screenshot_to_hark(app),
                         "reload" => reload_main(app),
@@ -2515,6 +2733,18 @@ fn main() {
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
+                    // Right-click opens the menu: fetch a fresh usage line.
+                    #[cfg(windows)]
+                    {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Right,
+                            button_state: MouseButtonState::Down,
+                            ..
+                        } = event
+                        {
+                            usage_tick(tray.app_handle());
+                        }
+                    }
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,

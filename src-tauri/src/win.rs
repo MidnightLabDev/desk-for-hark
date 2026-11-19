@@ -168,15 +168,21 @@ pub fn send_ctrl_c() {
 
 /// Taskbar right-click tasks. Each runs the exe with an argument that the
 /// running instance receives through the single-instance plugin.
-pub fn set_jump_list(app_id: &str) {
+pub fn set_jump_list(app_id: &str, usage: Option<&str>) {
     let Ok(exe) = std::env::current_exe() else { return };
     let exe = exe.to_string_lossy().to_string();
-    let tasks = [
+    let mut tasks: Vec<(String, &'static str)> = Vec::new();
+    if let Some(u) = usage {
+        tasks.push((u.to_string(), "--usage"));
+    }
+    for (t, a) in [
         ("Quick Ask", "--quick"),
         ("Screenshot to Hark", "--screenshot"),
         ("Open Hark", "--show"),
         ("Settings", "--settings"),
-    ];
+    ] {
+        tasks.push((t.to_string(), a));
+    }
     std::thread::spawn({
         let app_id = app_id.to_string();
         move || unsafe {
@@ -188,7 +194,9 @@ pub fn set_jump_list(app_id: &str) {
                 let _removed: IObjectArray = list.BeginList(&mut slots)?;
                 let coll: IObjectCollection =
                     CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
-                for (title, arg) in tasks {
+                for (title, arg) in &tasks {
+                    let title = title.as_str();
+                    let arg = *arg;
                     let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
                     link.SetPath(&HSTRING::from(exe.as_str()))?;
                     link.SetArguments(&HSTRING::from(arg))?;
