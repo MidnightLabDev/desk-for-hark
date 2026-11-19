@@ -1215,22 +1215,26 @@ const USAGE_START_JS: &str = r#"(function(){var W=window;if(location.host!=='app
 function cls(k){k=String(k||'').toLowerCase();if(/day|daily/.test(k))return 'Today';if(/month|pool|period|cycle/.test(k))return 'Month';if(/week/.test(k))return 'Week';return '';}
 function tms(r){if(r==null)return NaN;var d=new Date(typeof r==='number'&&r<1e11?r*1000:r);return d.getTime();}
 function soon(r){var t=tms(r);return !isNaN(t)&&t-Date.now()<36e5*48;}
-function wins(j){var out=[],seen={};function add(n,p,r){if(!n||p==null||seen[n])return;seen[n]=1;out.push({name:n,pct:p,reset:r});}
-(function walk(o,key,d){if(!o||typeof o!=='object'||d>6)return;if(Array.isArray(o)){for(var i=0;i<o.length&&i<20;i++)walk(o[i],key,d+1);return;}
-var pc={},rs={},pU=null,rU=null,used=null,limit=null,left=null;
-for(var k in o){var lk=k.toLowerCase(),v=o[k],c=cls(k);
-if(typeof v==='number'&&/percent|pct/.test(lk)){var p=(v<=1&&v%1!==0)?v*100:v;if(c){if(pc[c]==null)pc[c]=p;}else if(pU==null)pU=p;continue;}
-if(/reset|periodend|period_end|renew|next_?billing/.test(lk)&&(typeof v==='string'||typeof v==='number')){if(c){if(rs[c]==null)rs[c]=v;}else if(rU==null)rU=v;continue;}
-if(typeof v==='number'&&!c){if(/used|spent|consumed/.test(lk)||lk==='usage')used=v;else if(/limit|allowance|included|quota/.test(lk)||lk==='total'||lk==='max')limit=v;else if(/remaining|left|balance/.test(lk))left=v;}}
-if(pU==null&&limit>0){if(used!=null)pU=used/limit*100;else if(left!=null)pU=(limit-left)/limit*100;}
+function wins(j){var out=[],seen={};function add(n,p,r){if(!n||p==null||isNaN(p)||seen[n])return;seen[n]=1;out.push({name:n,pct:p,reset:r});}
+(function walk(o,key,d){if(!o||typeof o!=='object'||d>7)return;if(Array.isArray(o)){for(var i=0;i<o.length&&i<20;i++)walk(o[i],key,d+1);return;}
+var g={};function G(c){return g[c]||(g[c]={});}
+for(var k in o){var lk=k.toLowerCase(),v=o[k],c=cls(k),e=G(c);
+if(/reset|periodend|period_end|renew|next_?billing/.test(lk)&&(typeof v==='string'||typeof v==='number')){if(e.r==null)e.r=v;continue;}
+if(typeof v!=='number')continue;
+if(/percent|pct/.test(lk)){if(e.p==null)e.p=(v<=1&&v%1!==0)?v*100:v;}
+else if(/remaining|left|balance/.test(lk)){if(e.left==null)e.left=v;}
+else if(/used|spent|consumed/.test(lk)||lk==='usage'){if(e.u==null)e.u=v;}
+else if(/limit|allowance|included|quota|cap/.test(lk)||lk==='total'||lk==='max'){if(e.l==null)e.l=v;}}
 for(var k2 in o){if(o[k2]&&typeof o[k2]==='object')walk(o[k2],k2,d+1);}
+var U=g['']||{};
+for(var c in g){var e=g[c];if(e.p==null&&e.l>0){if(e.u!=null)e.p=e.u/e.l*100;else if(e.left!=null)e.p=(e.l-e.left)/e.l*100;}}
 var pk=cls(key);
-for(var c2 in pc){var r2=rs[c2];if(r2==null&&rU!=null&&(c2==='Today')===soon(rU))r2=rU;add(c2,pc[c2],r2);}
-if(pU!=null){var n=pk||((pc.Today!=null||seen.Today)?'Month':((pc.Month!=null||seen.Month)?'Today':''));if(!n)n=(rU!=null&&soon(rU)&&!rs.Today)?'Today':'Month';var r3=rs[n];if(r3==null&&rU!=null&&(n==='Today')===soon(rU))r3=rU;add(n,pU,r3);}})(j,'',0);return out;}
+['Today','Week','Month'].forEach(function(c){var e=g[c];if(!e||e.p==null)return;var r=e.r;if(r==null&&U.r!=null&&(c==='Today')===soon(U.r))r=U.r;add(c,e.p,r);});
+if(U.p!=null){var n=pk;if(!n&&U.r!=null)n=soon(U.r)?'Today':'Month';if(!n)n=seen.Today?'Month':(seen.Month?'Today':'Month');add(n,U.p,U.r);}})(j,'',0);return out;}
 function when(r,nm){var t=tms(r);if(isNaN(t))return '';var d=new Date(t);var now=new Date();var tt=d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});if(d.toDateString()===now.toDateString())return ' · resets '+tt;var tm=new Date(now.getTime()+864e5);if(d.toDateString()===tm.toDateString())return ' · resets tomorrow '+tt;return ' · resets '+d.toLocaleDateString([], {month:'short',day:'numeric'});}
 function lines(j){var out=wins(j);var rank={Today:0,Week:1,Month:2};out.sort(function(a,b){return (rank[a.name]==null?3:rank[a.name])-(rank[b.name]==null?3:rank[b.name]);});return out.slice(0,3).map(function(w){return w.name+' '+Math.round(Math.max(0,w.pct))+'%'+when(w.reset,w.name);});}
 var f=W.__deskRealFetch||W.fetch;var m=document.querySelector('meta[name="hark-locale"]');var h={};if(m&&m.content)h['X-Hark-Locale']=m.content;
-f.call(W,'/api/billing/summary',{credentials:'include',headers:h}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){var s='';try{s=JSON.stringify(j);}catch(e){}W.__deskUsage={ok:1,lines:lines(j),raw:s.length>600?s.slice(0,600)+'…':s,at:Date.now()};}).catch(function(e){W.__deskUsage={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskUsageBusy=0;});return 1;})()"#;
+f.call(W,'/api/billing/summary',{credentials:'include',headers:h}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){var s='';try{s=JSON.stringify(j);}catch(e){}W.__deskUsage={ok:1,lines:lines(j),raw:(function(){var i=s.indexOf('"meters"');var t=i>=0?s.slice(i):s;return t.length>2000?t.slice(0,2000)+'…':t;})(),at:Date.now()};}).catch(function(e){W.__deskUsage={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskUsageBusy=0;});return 1;})()"#;
 const USAGE_READ_JS: &str = "(function(){return window.__deskUsage||null;})()";
 
 /// The two usage lines at the top of the tray menu.

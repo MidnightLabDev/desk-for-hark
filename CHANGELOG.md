@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.16
+
+- Usage quick view: fixed "Usage: open Billing" showing even though Hark's usage summary loaded. 1.7.15 worked out used ÷ limit only for unnamed fields, so it skipped the daily and monthly ones. The sum now runs separately for Today and Month, and a window with no daily or monthly name is named by its reset time (under 48 hours means Today).
+- Tray > Notification status now shows the usage part of the summary ("meters") in full, up to 2000 characters, so a wrong reading is easy to check.
+
 ## 1.7.15
 
 - Usage quick view: fixed "Harktokens 44% · resets tomorrow" showing in place of separate Today and Month lines. Hark's summary keeps both limits side by side in one place, and 1.7.14 read only the first one and paired it with the daily reset time. Each percentage and reset time is now matched by name (daily or monthly), so the menu shows "Today 9% · resets tomorrow 6:07 PM" and "Month 44% · resets Dec 15".
