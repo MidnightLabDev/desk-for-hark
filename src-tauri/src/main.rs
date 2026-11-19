@@ -1205,146 +1205,62 @@ fn set_sendto(app: &AppHandle, on: bool) -> bool {
 
 // ------------------------------------------------------------ usage view
 // Hark's Settings > Usage and plan reads GET /api/billing/summary. The app
-// reads the same summary inside the signed-in page every 5 minutes (and
-// when the tray menu is opened) and shows it in the tray menu, the tray
-// tooltip and the taskbar jump list.
+// reads the same summary inside the signed-in page after launch, every 5
+// minutes and when the tray menu is opened, and shows each usage window
+// (today's and the month's) in the tray menu, the tray tooltip and the
+// taskbar jump list. The page formats the lines, so reset times are in the
+// PC's own time zone.
 
-const USAGE_START_JS: &str = r#"(function(){var W=window;if(location.host!=='app.hark.com'||W.__deskUsageBusy)return 0;W.__deskUsageBusy=1;var f=W.__deskRealFetch||W.fetch;var m=document.querySelector('meta[name="hark-locale"]');var h={};if(m&&m.content)h['X-Hark-Locale']=m.content;f.call(W,'/api/billing/summary',{credentials:'include',headers:h}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){W.__deskUsage={ok:1,j:j,at:Date.now()};}).catch(function(e){W.__deskUsage={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskUsageBusy=0;});return 1;})()"#;
+const USAGE_START_JS: &str = r#"(function(){var W=window;if(location.host!=='app.hark.com'||W.__deskUsageBusy)return 0;W.__deskUsageBusy=1;
+function wins(j){var out=[];(function walk(o,key,d){if(!o||typeof o!=='object'||d>6)return;if(Array.isArray(o)){for(var i=0;i<o.length&&i<20;i++)walk(o[i],key,d+1);return;}var pct=null,reset=null,used=null,limit=null,left=null;for(var k in o){var lk=k.toLowerCase(),v=o[k];if(typeof v==='number'){if(pct==null&&/percent|pct/.test(lk))pct=(v<=1&&v%1!==0)?v*100:v;else if(/used|spent|consumed/.test(lk)||lk==='usage')used=v;else if(/limit|allowance|included|quota/.test(lk)||lk==='total'||lk==='max')limit=v;else if(/remaining|left|balance/.test(lk))left=v;}if(reset==null&&/reset|periodend|period_end|renew|next_?billing/.test(lk)&&(typeof v==='string'||typeof v==='number'))reset=v;}if(pct==null&&limit>0){if(used!=null)pct=used/limit*100;else if(left!=null)pct=(limit-left)/limit*100;}if(pct!=null)out.push({key:String(key||''),pct:pct,reset:reset});for(var k2 in o){if(o[k2]&&typeof o[k2]==='object')walk(o[k2],k2,d+1);}})(j,'',0);return out;}
+function name(k){k=k.toLowerCase();if(/day|daily/.test(k))return 'Today';if(/month|pool|period|cycle|plan/.test(k))return 'Month';if(/week/.test(k))return 'Week';return k?k.charAt(0).toUpperCase()+k.slice(1):'Usage';}
+function when(r,nm){if(r==null)return '';var d=new Date(typeof r==='number'&&r<1e11?r*1000:r);if(isNaN(d))return '';var now=new Date();var t=d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});if(nm==='Today'||d-now<36e5*36){if(d.toDateString()===now.toDateString())return ' · resets '+t;var tm=new Date(now.getTime()+864e5);if(d.toDateString()===tm.toDateString())return ' · resets tomorrow '+t;}return ' · resets '+d.toLocaleDateString([], {month:'short',day:'numeric'});}
+function lines(j){var seen={},out=[];wins(j).forEach(function(w){var n=name(w.key);if(seen[n])return;seen[n]=1;out.push([n,Math.round(Math.max(0,w.pct))+'%'+when(w.reset,n)]);});var rank={Today:0,Week:1,Month:2};out.sort(function(a,b){return (rank[a[0]]==null?3:rank[a[0]])-(rank[b[0]]==null?3:rank[b[0]]);});return out.slice(0,3).map(function(x){return x[0]+' '+x[1];});}
+var f=W.__deskRealFetch||W.fetch;var m=document.querySelector('meta[name="hark-locale"]');var h={};if(m&&m.content)h['X-Hark-Locale']=m.content;
+f.call(W,'/api/billing/summary',{credentials:'include',headers:h}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){var s='';try{s=JSON.stringify(j);}catch(e){}W.__deskUsage={ok:1,lines:lines(j),raw:s.length>600?s.slice(0,600)+'…':s,at:Date.now()};}).catch(function(e){W.__deskUsage={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskUsageBusy=0;});return 1;})()"#;
 const USAGE_READ_JS: &str = "(function(){return window.__deskUsage||null;})()";
 
-static USAGE_ITEM: std::sync::OnceLock<MenuItem<Wry>> = std::sync::OnceLock::new();
-static USAGE_TEXT: std::sync::Mutex<(String, String)> = std::sync::Mutex::new((String::new(), String::new()));
+/// The two usage lines at the top of the tray menu.
+static USAGE_ITEMS: std::sync::OnceLock<[MenuItem<Wry>; 2]> = std::sync::OnceLock::new();
+static USAGE_TEXT: std::sync::Mutex<(Vec<String>, String)> = std::sync::Mutex::new((Vec::new(), String::new()));
 static USAGE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn usage_status_line() -> String {
     let g = USAGE_TEXT.lock().map(|g| g.clone()).unwrap_or_default();
-    let label = if g.0.is_empty() { "not checked yet".to_string() } else { g.0 };
+    let label = if g.0.is_empty() { "not checked yet".to_string() } else { g.0.join(", ") };
     if g.1.is_empty() { label } else { format!("{label}\nUsage summary seen: {}", g.1) }
 }
 
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/// "Nov 25" from an ISO date, or from Unix seconds / milliseconds.
-fn short_date(v: &serde_json::Value) -> Option<String> {
-    if let Some(s) = v.as_str() {
-        let b = s.as_bytes();
-        if b.len() >= 10 && b[4] == b'-' && b[7] == b'-' {
-            let mo: usize = s[5..7].parse().ok()?;
-            let d: u32 = s[8..10].parse().ok()?;
-            return MONTHS.get(mo.checked_sub(1)?).map(|m| format!("{m} {d}"));
-        }
-        return None;
-    }
-    let mut n = v.as_f64()?;
-    if n > 1e11 {
-        n /= 1000.0;
-    }
-    if n < 1e9 {
-        return None;
-    }
-    let days = (n / 86400.0).floor() as i64;
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    let z = days + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
-    MONTHS.get((mo - 1) as usize).map(|m| format!("{m} {d}"))
-}
-
-/// Finds a usage percentage and a reset date anywhere in the summary.
-fn usage_label(j: &serde_json::Value) -> Option<String> {
-    let mut pct: Option<f64> = None;
-    let mut pair: Option<f64> = None;
-    let mut reset: Option<String> = None;
-    let mut plan: Option<String> = None;
-    fn walk(v: &serde_json::Value, d: u32, pct: &mut Option<f64>, pair: &mut Option<f64>, reset: &mut Option<String>, plan: &mut Option<String>) {
-        if d > 6 {
-            return;
-        }
-        match v {
-            serde_json::Value::Array(a) => a.iter().take(20).for_each(|x| walk(x, d + 1, pct, pair, reset, plan)),
-            serde_json::Value::Object(o) => {
-                let mut used = None;
-                let mut limit = None;
-                let mut left = None;
-                for (k, x) in o {
-                    let k = k.to_ascii_lowercase();
-                    if let Some(n) = x.as_f64() {
-                        if pct.is_none() && (k.contains("percent") || k.contains("pct")) {
-                            *pct = Some(if n <= 1.0 && n.fract() != 0.0 { n * 100.0 } else { n });
-                        } else if pct.is_none() && (k.contains("fraction") || k.contains("ratio")) && n <= 1.0 {
-                            *pct = Some(n * 100.0);
-                        } else if k.contains("used") || k.contains("spent") || k == "usage" || k.contains("consumed") {
-                            used = Some(n);
-                        } else if k.contains("limit") || k.contains("allowance") || k.contains("included") || k == "total" || k.contains("quota") || k == "max" {
-                            limit = Some(n);
-                        } else if k.contains("remaining") || k.contains("left") || k.contains("balance") {
-                            left = Some(n);
-                        }
-                    }
-                    if reset.is_none() && (k.contains("reset") || k.contains("periodend") || k.contains("period_end") || k.contains("renew") || k.contains("nextbilling") || k.contains("next_billing")) {
-                        *reset = short_date(x);
-                    }
-                    if plan.is_none() && (k == "plan" || k == "planname" || k == "plan_name" || k == "tier") {
-                        if let Some(s) = x.as_str() {
-                            *plan = Some(s.to_string());
-                        } else if let Some(s) = x.get("name").or_else(|| x.get("displayName")).and_then(|s| s.as_str()) {
-                            *plan = Some(s.to_string());
-                        }
-                    }
-                }
-                if pair.is_none() {
-                    if let Some(l) = limit.filter(|l| *l > 0.0) {
-                        if let Some(u) = used {
-                            *pair = Some(u / l * 100.0);
-                        } else if let Some(r) = left {
-                            *pair = Some((l - r) / l * 100.0);
-                        }
-                    }
-                }
-                for x in o.values() {
-                    if x.is_object() || x.is_array() {
-                        walk(x, d + 1, pct, pair, reset, plan);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    walk(j, 0, &mut pct, &mut pair, &mut reset, &mut plan);
-    let p = pct.or(pair)?;
-    let p = p.clamp(0.0, 999.0).round() as i64;
-    let mut s = format!("Usage {p}%");
-    if let Some(r) = reset {
-        s.push_str(&format!(" · resets {r}"));
-    }
-    let _ = plan;
-    Some(s)
-}
-
-fn set_usage_label(app: &AppHandle, label: &str, raw: String) {
+fn set_usage_lines(app: &AppHandle, lines: Vec<String>, raw: String) {
     let changed = {
         let Ok(mut g) = USAGE_TEXT.lock() else { return };
-        let changed = g.0 != label;
-        *g = (label.to_string(), raw);
+        let changed = g.0 != lines;
+        *g = (lines.clone(), raw);
         changed
     };
     if !changed {
         return;
     }
-    if let Some(item) = USAGE_ITEM.get() {
-        let _ = item.set_text(label);
+    if let Some(items) = USAGE_ITEMS.get() {
+        let _ = items[0].set_text(lines.first().map(|s| s.as_str()).unwrap_or("Usage: open Billing"));
+        match lines.get(1) {
+            Some(s) => {
+                let _ = items[1].set_text(s);
+                let _ = items[1].set_enabled(true);
+            }
+            None => {
+                let _ = items[1].set_text(if lines.is_empty() { "" } else { "Month: not shown by Hark" });
+                let _ = items[1].set_enabled(false);
+            }
+        }
     }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(format!("Desk for Hark\n{label}")));
+        let _ = tray.set_tooltip(Some(format!("Desk for Hark\n{}", lines.join("\n"))));
     }
     #[cfg(windows)]
     {
-        win::set_jump_list(APP_ID, Some(label));
+        let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        win::set_jump_list(APP_ID, &refs);
     }
 }
 
@@ -1375,22 +1291,18 @@ fn usage_tick(app: &AppHandle) {
                 return;
             }
             if v.get("ok").and_then(|x| x.as_i64()) == Some(1) {
-                let j = v.get("j").cloned().unwrap_or(serde_json::Value::Null);
-                let mut raw = j.to_string();
-                if raw.len() > 600 {
-                    let mut cut = 600;
-                    while !raw.is_char_boundary(cut) {
-                        cut -= 1;
-                    }
-                    raw.truncate(cut);
-                    raw.push('…');
-                }
-                let label = usage_label(&j).unwrap_or_else(|| "Usage: open Billing".to_string());
-                set_usage_label(&app2, &label, raw);
+                let lines: Vec<String> = v
+                    .get("lines")
+                    .and_then(|x| x.as_array())
+                    .map(|a| a.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                let raw = v.get("raw").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let lines = if lines.is_empty() { vec!["Usage: open Billing".to_string()] } else { lines };
+                set_usage_lines(&app2, lines, raw);
             } else {
                 let err = v.get("err").and_then(|x| x.as_str()).unwrap_or("").to_string();
                 let label = if err.contains("401") || err.contains("403") { "Usage: sign in to Hark" } else { "Usage: open Billing" };
-                set_usage_label(&app2, label, format!("error {err}"));
+                set_usage_lines(&app2, vec![label.to_string()], format!("error {err}"));
             }
         });
     });
@@ -2475,7 +2387,7 @@ fn main() {
                         popup: None,
                     },
                 );
-                win::set_jump_list(APP_ID, Some("Usage: checking…"));
+                win::set_jump_list(APP_ID, &["Usage: checking…"]);
                 if s.mica {
                     win::style_title_bar(&window, true, None, None, true);
                 }
@@ -2562,7 +2474,8 @@ fn main() {
             let sendto_on = sendto_link(&handle).map(|p| p.exists()).unwrap_or(false);
 
             let usage_item = MenuItem::with_id(app, "usage", "Usage: checking…", true, None::<&str>)?;
-            let _ = USAGE_ITEM.set(usage_item.clone());
+            let usage_item2 = MenuItem::with_id(app, "usage2", "", false, None::<&str>)?;
+            let _ = USAGE_ITEMS.set([usage_item.clone(), usage_item2.clone()]);
             let show_hide = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
             let quick = MenuItem::with_id(app, "quick", "Quick Ask…", true, None::<&str>)?;
             let shot = MenuItem::with_id(app, "screenshot", "Screenshot to Hark", true, None::<&str>)?;
@@ -2613,6 +2526,7 @@ fn main() {
                 app,
                 &[
                     &usage_item,
+                    &usage_item2,
                     &PredefinedMenuItem::separator(app)?,
                     &show_hide,
                     &quick,
@@ -2673,7 +2587,7 @@ fn main() {
                                 show_main(app);
                             }
                         }
-                        "usage" => open_billing(app),
+                        "usage" | "usage2" => open_billing(app),
                         "quick" => show_quick(app),
                         "screenshot" => screenshot_to_hark(app),
                         "reload" => reload_main(app),

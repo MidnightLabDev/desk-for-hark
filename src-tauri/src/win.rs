@@ -168,11 +168,11 @@ pub fn send_ctrl_c() {
 
 /// Taskbar right-click tasks. Each runs the exe with an argument that the
 /// running instance receives through the single-instance plugin.
-pub fn set_jump_list(app_id: &str, usage: Option<&str>) {
+pub fn set_jump_list(app_id: &str, usage: &[&str]) {
     let Ok(exe) = std::env::current_exe() else { return };
     let exe = exe.to_string_lossy().to_string();
     let mut tasks: Vec<(String, &'static str)> = Vec::new();
-    if let Some(u) = usage {
+    for u in usage.iter().filter(|u| !u.is_empty()) {
         tasks.push((u.to_string(), "--usage"));
     }
     for (t, a) in [

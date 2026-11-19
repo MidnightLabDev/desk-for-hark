@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.14
+
+- **Usage quick view shows today and the month**: the tray menu, the taskbar jump list and the tray tooltip now show both of Hark's usage limits, like "Today 8% · resets 6:07 PM" and "Month 43% · resets Dec 15". 1.7.13 showed only one of them, without saying which. Reset times are in your PC's time zone. Either line opens Hark's Usage and plan page.
+
 ## 1.7.13
 
 - **Usage quick view**: right-click the tray icon or the taskbar icon to see your Hark usage, like "Usage 62% · resets Nov 25", without opening Settings. Click it to open Hark's Usage and plan page. Hovering over the tray icon shows the same line.
