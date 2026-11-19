@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.15
+
+- Usage quick view: fixed "Harktokens 44% · resets tomorrow" showing in place of separate Today and Month lines. Hark's summary keeps both limits side by side in one place, and 1.7.14 read only the first one and paired it with the daily reset time. Each percentage and reset time is now matched by name (daily or monthly), so the menu shows "Today 9% · resets tomorrow 6:07 PM" and "Month 44% · resets Dec 15".
+
 ## 1.7.14
 
 - **Usage quick view shows today and the month**: the tray menu, the taskbar jump list and the tray tooltip now show both of Hark's usage limits, like "Today 8% · resets 6:07 PM" and "Month 43% · resets Dec 15". 1.7.13 showed only one of them, without saying which. Reset times are in your PC's time zone. Either line opens Hark's Usage and plan page.

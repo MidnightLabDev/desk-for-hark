@@ -1212,10 +1212,23 @@ fn set_sendto(app: &AppHandle, on: bool) -> bool {
 // PC's own time zone.
 
 const USAGE_START_JS: &str = r#"(function(){var W=window;if(location.host!=='app.hark.com'||W.__deskUsageBusy)return 0;W.__deskUsageBusy=1;
-function wins(j){var out=[];(function walk(o,key,d){if(!o||typeof o!=='object'||d>6)return;if(Array.isArray(o)){for(var i=0;i<o.length&&i<20;i++)walk(o[i],key,d+1);return;}var pct=null,reset=null,used=null,limit=null,left=null;for(var k in o){var lk=k.toLowerCase(),v=o[k];if(typeof v==='number'){if(pct==null&&/percent|pct/.test(lk))pct=(v<=1&&v%1!==0)?v*100:v;else if(/used|spent|consumed/.test(lk)||lk==='usage')used=v;else if(/limit|allowance|included|quota/.test(lk)||lk==='total'||lk==='max')limit=v;else if(/remaining|left|balance/.test(lk))left=v;}if(reset==null&&/reset|periodend|period_end|renew|next_?billing/.test(lk)&&(typeof v==='string'||typeof v==='number'))reset=v;}if(pct==null&&limit>0){if(used!=null)pct=used/limit*100;else if(left!=null)pct=(limit-left)/limit*100;}if(pct!=null)out.push({key:String(key||''),pct:pct,reset:reset});for(var k2 in o){if(o[k2]&&typeof o[k2]==='object')walk(o[k2],k2,d+1);}})(j,'',0);return out;}
-function name(k){k=k.toLowerCase();if(/day|daily/.test(k))return 'Today';if(/month|pool|period|cycle|plan/.test(k))return 'Month';if(/week/.test(k))return 'Week';return k?k.charAt(0).toUpperCase()+k.slice(1):'Usage';}
-function when(r,nm){if(r==null)return '';var d=new Date(typeof r==='number'&&r<1e11?r*1000:r);if(isNaN(d))return '';var now=new Date();var t=d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});if(nm==='Today'||d-now<36e5*36){if(d.toDateString()===now.toDateString())return ' · resets '+t;var tm=new Date(now.getTime()+864e5);if(d.toDateString()===tm.toDateString())return ' · resets tomorrow '+t;}return ' · resets '+d.toLocaleDateString([], {month:'short',day:'numeric'});}
-function lines(j){var seen={},out=[];wins(j).forEach(function(w){var n=name(w.key);if(seen[n])return;seen[n]=1;out.push([n,Math.round(Math.max(0,w.pct))+'%'+when(w.reset,n)]);});var rank={Today:0,Week:1,Month:2};out.sort(function(a,b){return (rank[a[0]]==null?3:rank[a[0]])-(rank[b[0]]==null?3:rank[b[0]]);});return out.slice(0,3).map(function(x){return x[0]+' '+x[1];});}
+function cls(k){k=String(k||'').toLowerCase();if(/day|daily/.test(k))return 'Today';if(/month|pool|period|cycle/.test(k))return 'Month';if(/week/.test(k))return 'Week';return '';}
+function tms(r){if(r==null)return NaN;var d=new Date(typeof r==='number'&&r<1e11?r*1000:r);return d.getTime();}
+function soon(r){var t=tms(r);return !isNaN(t)&&t-Date.now()<36e5*48;}
+function wins(j){var out=[],seen={};function add(n,p,r){if(!n||p==null||seen[n])return;seen[n]=1;out.push({name:n,pct:p,reset:r});}
+(function walk(o,key,d){if(!o||typeof o!=='object'||d>6)return;if(Array.isArray(o)){for(var i=0;i<o.length&&i<20;i++)walk(o[i],key,d+1);return;}
+var pc={},rs={},pU=null,rU=null,used=null,limit=null,left=null;
+for(var k in o){var lk=k.toLowerCase(),v=o[k],c=cls(k);
+if(typeof v==='number'&&/percent|pct/.test(lk)){var p=(v<=1&&v%1!==0)?v*100:v;if(c){if(pc[c]==null)pc[c]=p;}else if(pU==null)pU=p;continue;}
+if(/reset|periodend|period_end|renew|next_?billing/.test(lk)&&(typeof v==='string'||typeof v==='number')){if(c){if(rs[c]==null)rs[c]=v;}else if(rU==null)rU=v;continue;}
+if(typeof v==='number'&&!c){if(/used|spent|consumed/.test(lk)||lk==='usage')used=v;else if(/limit|allowance|included|quota/.test(lk)||lk==='total'||lk==='max')limit=v;else if(/remaining|left|balance/.test(lk))left=v;}}
+if(pU==null&&limit>0){if(used!=null)pU=used/limit*100;else if(left!=null)pU=(limit-left)/limit*100;}
+for(var k2 in o){if(o[k2]&&typeof o[k2]==='object')walk(o[k2],k2,d+1);}
+var pk=cls(key);
+for(var c2 in pc){var r2=rs[c2];if(r2==null&&rU!=null&&(c2==='Today')===soon(rU))r2=rU;add(c2,pc[c2],r2);}
+if(pU!=null){var n=pk||((pc.Today!=null||seen.Today)?'Month':((pc.Month!=null||seen.Month)?'Today':''));if(!n)n=(rU!=null&&soon(rU)&&!rs.Today)?'Today':'Month';var r3=rs[n];if(r3==null&&rU!=null&&(n==='Today')===soon(rU))r3=rU;add(n,pU,r3);}})(j,'',0);return out;}
+function when(r,nm){var t=tms(r);if(isNaN(t))return '';var d=new Date(t);var now=new Date();var tt=d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});if(d.toDateString()===now.toDateString())return ' · resets '+tt;var tm=new Date(now.getTime()+864e5);if(d.toDateString()===tm.toDateString())return ' · resets tomorrow '+tt;return ' · resets '+d.toLocaleDateString([], {month:'short',day:'numeric'});}
+function lines(j){var out=wins(j);var rank={Today:0,Week:1,Month:2};out.sort(function(a,b){return (rank[a.name]==null?3:rank[a.name])-(rank[b.name]==null?3:rank[b.name]);});return out.slice(0,3).map(function(w){return w.name+' '+Math.round(Math.max(0,w.pct))+'%'+when(w.reset,w.name);});}
 var f=W.__deskRealFetch||W.fetch;var m=document.querySelector('meta[name="hark-locale"]');var h={};if(m&&m.content)h['X-Hark-Locale']=m.content;
 f.call(W,'/api/billing/summary',{credentials:'include',headers:h}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){var s='';try{s=JSON.stringify(j);}catch(e){}W.__deskUsage={ok:1,lines:lines(j),raw:s.length>600?s.slice(0,600)+'…':s,at:Date.now()};}).catch(function(e){W.__deskUsage={ok:0,err:String(e&&e.message||e),at:Date.now()};}).then(function(){W.__deskUsageBusy=0;});return 1;})()"#;
 const USAGE_READ_JS: &str = "(function(){return window.__deskUsage||null;})()";
@@ -1249,7 +1262,7 @@ fn set_usage_lines(app: &AppHandle, lines: Vec<String>, raw: String) {
                 let _ = items[1].set_enabled(true);
             }
             None => {
-                let _ = items[1].set_text(if lines.is_empty() { "" } else { "Month: not shown by Hark" });
+                let _ = items[1].set_text("");
                 let _ = items[1].set_enabled(false);
             }
         }
