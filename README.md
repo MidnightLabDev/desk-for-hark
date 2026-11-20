@@ -6,6 +6,8 @@
 
 > **Unofficial.** Desk for Hark is an independent open-source project. It is not affiliated with, endorsed by, or supported by Hark. "Hark" is a trademark of its owner. The app simply loads https://app.hark.com in its own window.
 
+<p align="center"><img src="docs/screenshot-christmas.webp" alt="Desk for Hark with the Christmas theme, Projects and the Files panel open"></p>
+
 ## Download
 
 Grab the latest installer from [Releases](https://github.com/MidnightLabDev/desk-for-hark/releases/latest):
