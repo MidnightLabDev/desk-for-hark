@@ -129,6 +129,8 @@ struct Settings {
     snow: bool,
     /// The project Files panel on the right (opened with Ctrl+Shift+F).
     files_panel: bool,
+    /// Arrows beside projects in Hark's sidebar that list their threads.
+    threads_sidebar: bool,
 }
 
 impl Default for Settings {
@@ -161,6 +163,7 @@ impl Default for Settings {
             restore_clipboard: true,
             snow: true,
             files_panel: true,
+            threads_sidebar: true,
         }
     }
 }
@@ -804,6 +807,7 @@ fn theme_payload(app: &AppHandle) -> serde_json::Value {
         "voiceSelector": s.voice_button_selector,
         "snow": s.snow,
         "filesPanel": s.files_panel,
+        "threadsSidebar": s.threads_sidebar,
     })
 }
 

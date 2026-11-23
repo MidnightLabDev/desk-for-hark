@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.17
+
+- New: threads under projects. A small arrow beside each project in Hark's sidebar opens its latest threads (each of your requests with the replies that follow it), with the first line and the time. An orange dot means the newest thread needs your input; a blue dot means a thread has a reply you haven't opened yet. Click a thread to open the project through Hark's own link and scroll straight to it, without reloading Hark. Threads load only when you open a project's arrow, show 5 at first with "Show older threads" for up to 20, and refresh when Hark reports something new. Your open arrows are remembered. Turn it off in Settings > Threads in sidebar.
+- Releases are now published as drafts first and checked with an antivirus scan before they go out. An earlier 1.7.17 build was flagged by one antivirus's heuristics (a false positive) and was withdrawn.
+
 ## 1.7.16
 
 - Usage quick view: fixed "Usage: open Billing" showing even though Hark's usage summary loaded. 1.7.15 worked out used ÷ limit only for unnamed fields, so it skipped the daily and monthly ones. The sum now runs separately for Today and Month, and a window with no daily or monthly name is named by its reset time (under 48 hours means Today).

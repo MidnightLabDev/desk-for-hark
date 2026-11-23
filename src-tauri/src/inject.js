@@ -565,6 +565,7 @@
       if (guardOn) setTimeout(function () { try { guardRun(); } catch (e) {} }, 400);
     } catch (e) {}
     if (window.__deskFilesSetting) window.__deskFilesSetting(p.filesPanel !== false);
+    if (window.__deskThreadsSetting) window.__deskThreadsSetting(p.threadsSidebar !== false);
     var out = cssFor(p);
     var el = document.getElementById("desk-theme");
     if (!el) {
@@ -1524,6 +1525,11 @@
       if (open && searchEl) searchEl.focus();
     }
     window.__deskToggleFiles = toggle;
+    // Used by the sidebar threads list: jump to one message in the open chat.
+    window.__deskGoToMsg = function (id, when, label) {
+      if (when && !msgs[id]) msgs[id] = { id: id, role: "user", when: when, text: "" };
+      goTo({ msg: id, when: when || 0, name: label || "that message" });
+    };
     window.__deskFilesSetting = function (on) { enabled = !!on; sync(); };
     window.addEventListener("keydown", function (e) {
       if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "F" || e.key === "f")) { e.preventDefault(); e.stopPropagation(); toggle(); }
@@ -1533,6 +1539,321 @@
     var lastPath = "";
     setInterval(function () { if (location.pathname !== lastPath) { lastPath = location.pathname; sync(); } }, 800);
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", sync); else sync();
+  })();
+
+  // ---- Threads under projects (sidebar) ---------------------------------
+  // A small arrow beside each project in Hark's sidebar opens its latest
+  // threads: each of your requests with the replies that follow it. They're
+  // read from the project's history (the same request Hark's page makes)
+  // only when you open the arrow. A click opens the project through Hark's
+  // own link and scrolls to that request without reloading Hark.
+  // Settings > "Threads in sidebar" turns all of this off.
+  (function () {
+    var KEY = "deskForHark.threadsOpen.v1", SEEN = "deskForHark.threadsSeen.v1", JUMP = "deskForHark.threadJump.v1";
+    var SHOW = 5, MORE = 20;
+    var enabled = !(currentPayload && currentPayload.threadsSidebar === false);
+    var openSet = {}, seen = {}, cache = {}, busy = {}, wide = {}, marks = {}, selected = null;
+    try { openSet = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) {}
+    try { seen = JSON.parse(localStorage.getItem(SEEN) || "{}") || {}; } catch (e) {}
+    var realFetch = window.__deskRealFetch || window.fetch;
+    var SUB = "var(--color-text-secondary,rgba(127,127,127,.95))";
+    var LINE = "rgba(127,127,127,.28)";
+    function save() { try { localStorage.setItem(KEY, JSON.stringify(openSet)); } catch (e) {} }
+    function saveSeen() { try { localStorage.setItem(SEEN, JSON.stringify(seen)); } catch (e) {} }
+    function hdr() { var m = document.querySelector('meta[name="hark-locale"]'); return m && m.content ? { "X-Hark-Locale": m.content } : {}; }
+    function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+    function current() { return (location.pathname.match(/^\/project\/([^/?#]+)/) || [])[1] || null; }
+    function statusOf(pid) { return ((window.__deskStatus && window.__deskStatus.s) || {})[pid]; }
+    function stamp(m) {
+      var t = m && (m.createdAt || m.created_at || m.timestamp);
+      if (t == null) return 0;
+      var n = typeof t === "number" ? t : Date.parse(t);
+      if (typeof t === "number" && t < 1e12) n = t * 1000;
+      return isNaN(n) ? 0 : n;
+    }
+    function textOf(m) {
+      var c = m && (m.content != null ? m.content : m.text);
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map(function (p) { return typeof p === "string" ? p : (p && (p.text || p.content)) || ""; }).filter(Boolean).join(" ");
+      return "";
+    }
+    function replyOf(m) {
+      var r = m && (m.replyTo || m.reply_to || m.replyToId || m.reply_to_id || m.inResponseTo || m.in_response_to || m.parentMessageId || m.parent_message_id);
+      if (r && typeof r === "object") r = r.id;
+      return typeof r === "string" ? r : null;
+    }
+    function list(j) {
+      var m = Array.isArray(j) ? j : (j && (j.messages || j.items || j.records)) || [];
+      if (!Array.isArray(m)) m = typeof m === "object" ? Object.keys(m).map(function (k) { var v = m[k]; if (v && typeof v === "object" && !v.id) v.id = k; return v; }) : [];
+      return m.filter(function (x) { return x && x.id; });
+    }
+    function page(id, before) {
+      var q = new URLSearchParams({ conversationId: id, v: "2" });
+      if (before) { q.set("before", before.id); q.set("beforeCreatedAt", String(before.createdAt != null ? before.createdAt : before.created_at)); }
+      return realFetch.call(window, "/api/messages/history?" + q.toString(), { credentials: "include", headers: hdr(), cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function (j) { var m = list(j); m.cursor = j && j.older && j.older.cursor && j.older.cursor.id ? j.older.cursor : null; return m; });
+    }
+    // Groups a project's messages into threads. Hark's reply link is used
+    // when the history carries one; otherwise each of your messages starts a
+    // thread and the replies after it belong to it. Each thread keeps who
+    // spoke last, for the dots.
+    function group(all) {
+      all.sort(function (a, b) { return stamp(a) - stamp(b); });
+      var byId = {}, threads = [], cur = null;
+      function touch(t, m) { t.ids[m.id] = 1; if (stamp(m) >= t.last) { t.last = stamp(m); t.lastRole = m.role; } }
+      all.forEach(function (m) { byId[m.id] = m; });
+      all.forEach(function (m) {
+        var text = textOf(m).replace(/\s+/g, " ").trim();
+        if (m.role === "user") {
+          var to = replyOf(m), parent = to && byId[to];
+          var host = parent && threads.filter(function (t) { return t.ids[parent.id]; })[0];
+          if (host && parent.role === "user") { touch(host, m); return; }
+          if (!text) return;
+          cur = { id: m.id, title: text.slice(0, 90), when: stamp(m), last: stamp(m), lastRole: "user", ids: {} };
+          cur.ids[m.id] = 1; threads.push(cur);
+        } else {
+          var r = replyOf(m), t = (r && threads.filter(function (x) { return x.ids[r]; })[0]) || cur;
+          if (t) touch(t, m);
+        }
+      });
+      return threads.sort(function (a, b) { return b.when - a.when; });
+    }
+    // Remembers, per thread, the newest reply you've seen. The first time a
+    // project's threads load, everything counts as seen except what Hark
+    // itself says is unread.
+    function baseline(pid, threads) {
+      if (seen[pid]) return;
+      seen[pid] = {};
+      var unread = statusOf(pid) === "unread";
+      threads.forEach(function (t, i) { if (!(unread && i === 0)) seen[pid][t.id] = t.last; });
+      saveSeen();
+    }
+    function markSeen(pid, t) {
+      seen[pid] = seen[pid] || {};
+      if ((seen[pid][t.id] || 0) >= t.last) return;
+      seen[pid][t.id] = t.last; saveSeen();
+    }
+    // Orange: the newest thread, when Hark says the project needs your input.
+    // Blue: a reply newer than the last time you opened that thread, while
+    // Hark says the project has something unread. When Hark says nothing is
+    // unread, everything is caught up.
+    function dotFor(pid, t, i) {
+      var s = statusOf(pid);
+      if (i === 0 && s === "needs_input") return "#f97316";
+      if (s !== "unread") { markSeen(pid, t); return ""; }
+      return t.lastRole !== "user" && t.last > ((seen[pid] || {})[t.id] || 0) ? "#3b82f6" : "";
+    }
+    function load(pid, force) {
+      var c = cache[pid];
+      if (busy[pid] || (!force && c && Date.now() - c.at < 60000)) return;
+      busy[pid] = 1;
+      var got = [];
+      page(pid, null).then(function (m) {
+        got = got.concat(m);
+        return m.cursor ? page(pid, m.cursor).then(function (n) { got = got.concat(n); }, function () {}) : null;
+      }).then(function () { var ts = group(got); baseline(pid, ts); cache[pid] = { at: Date.now(), threads: ts }; },
+        function (e) { cache[pid] = { at: Date.now(), threads: (c && c.threads) || [], err: "Couldn't read threads (" + (e && e.message || e) + ")." }; })
+        .then(function () { busy[pid] = 0; schedule(); });
+    }
+    function when(t) {
+      if (!t) return "";
+      var d = new Date(t), now = new Date();
+      try {
+        return d.toDateString() === now.toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+          : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+      } catch (e) { return ""; }
+    }
+    // Opens the project the way a click on it in Hark's sidebar would (its
+    // own link, so Hark's router handles it), then scrolls to the thread.
+    // If Hark hasn't moved after a few seconds, it asks the router directly,
+    // and as a last resort loads the project page and scrolls after.
+    function jump(pid, t, row) {
+      selected = pid + ":" + t.id; markSeen(pid, t); schedule();
+      function go() { if (window.__deskGoToMsg) window.__deskGoToMsg(t.id, t.when, "this thread"); }
+      if (current() === pid) { go(); return; }
+      var path = "/project/" + pid, link = row && (row.matches("a[href]") ? row : row.querySelector('a[href*="/project/' + pid + '"]'));
+      try { if (link) link.click(); else if (row) row.click(); } catch (e) {}
+      var tries = 0, pushed = false;
+      (function wait() {
+        if (current() === pid && document.querySelector("[data-message-id]")) { setTimeout(go, 250); return; }
+        tries++;
+        if (tries === 12 && current() !== pid && !pushed) {
+          pushed = true;
+          try { history.pushState({}, "", path); dispatchEvent(new PopStateEvent("popstate", { state: {} })); } catch (e) {}
+        }
+        if (tries === 30 && current() !== pid) {
+          try { sessionStorage.setItem(JUMP, JSON.stringify({ pid: pid, id: t.id, when: t.when })); } catch (e) {}
+          location.assign(path); return;
+        }
+        if (tries < 40) setTimeout(wait, 200);
+      })();
+    }
+    // Finishes a jump that needed a full page load.
+    (function resume() {
+      var j = null;
+      try { j = JSON.parse(sessionStorage.getItem(JUMP) || "null"); sessionStorage.removeItem(JUMP); } catch (e) {}
+      if (!j || !j.pid) return;
+      var tries = 0;
+      (function wait() {
+        if (current() === j.pid && document.querySelector("[data-message-id]") && window.__deskGoToMsg) {
+          setTimeout(function () { window.__deskGoToMsg(j.id, j.when, "this thread"); }, 400); return;
+        }
+        if (++tries < 60) setTimeout(wait, 250);
+      })();
+    })();
+    // Finds the sidebar rows that stand for projects: links to /project/<id>
+    // first. Only when there are none does it look for rows whose text is a
+    // project's title (from Hark's own list), and then at most every 5 s.
+    var lastTextScan = 0, textRows = [];
+    function rows() {
+      var out = [], seenPid = {}, maxX = Math.min(520, window.innerWidth * 0.45);
+      function add(node, pid) {
+        if (!node || seenPid[pid] || node.closest(".desk-th")) return;
+        var r = node.getBoundingClientRect();
+        if (!r.width || !r.height || r.left > maxX || r.height > 90) return;
+        seenPid[pid] = 1; out.push({ row: node, pid: pid });
+      }
+      var as = document.querySelectorAll('a[href*="/project/"]');
+      for (var i = 0; i < as.length; i++) {
+        var m = (as[i].getAttribute("href") || "").match(/\/project\/([^/?#]+)\/?$/);
+        if (m) add(as[i], m[1]);
+      }
+      if (out.length || !document.body) return out;
+      if (Date.now() - lastTextScan < 5000) {
+        textRows.forEach(function (f) { if (f.row.isConnected) add(f.row, f.pid); });
+        return out;
+      }
+      lastTextScan = Date.now();
+      var names = window.__deskNames || {}, byTitle = {};
+      Object.keys(names).forEach(function (id) {
+        var n = names[id]; if (!n || !n[0]) return;
+        if (n[1] && !/project/i.test(n[1])) return;
+        byTitle[n[0].trim()] = byTitle[n[0].trim()] === undefined ? id : null; // skip duplicate titles
+      });
+      if (!Object.keys(byTitle).length) return out;
+      var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), tn, k = 0;
+      while ((tn = w.nextNode()) && k++ < 6000) {
+        var id = byTitle[(tn.nodeValue || "").trim()];
+        if (!id || seenPid[id]) continue;
+        var p = tn.parentElement; if (!p) continue;
+        var row = p.closest('a,button,[role=button],[role=link],[role=menuitem],li') || p;
+        add(row, id);
+      }
+      textRows = out.slice();
+      return out;
+    }
+    function drop(pid) {
+      var c = marks[pid]; if (!c) return;
+      try { c.btn.remove(); } catch (e) {}
+      try { c.box.remove(); } catch (e) {}
+      delete marks[pid];
+    }
+    function caret(row, pid) {
+      var c = marks[pid];
+      if (c && c.row === row && row.contains(c.btn)) return c;
+      drop(pid);
+      var btn = el("span", "position:absolute;left:-20px;top:50%;transform:translateY(-50%);width:18px;height:18px;display:flex;" +
+        "align-items:center;justify-content:center;font-size:10px;color:" + SUB + ";cursor:pointer;border-radius:5px;opacity:.85;z-index:2");
+      btn.className = "desk-th"; btn.title = "Show threads"; btn.setAttribute("role", "button");
+      if (getComputedStyle(row).position === "static") row.style.position = "relative";
+      if (getComputedStyle(row).overflow === "hidden") { btn.style.left = "2px"; }
+      ["pointerdown", "mousedown", "mouseup"].forEach(function (ev) { btn.addEventListener(ev, function (e) { e.stopPropagation(); }, true); });
+      btn.addEventListener("click", function (e) {
+        e.preventDefault(); e.stopPropagation();
+        openSet[pid] = !openSet[pid]; if (!openSet[pid]) delete openSet[pid]; save();
+        if (openSet[pid]) load(pid, false);
+        paint();
+      }, true);
+      row.appendChild(btn);
+      var box = el("div", "margin:2px 0 8px 10px;padding-left:12px;border-left:1px solid " + LINE + ";font-size:13.5px;display:none");
+      box.className = "desk-th";
+      c = marks[pid] = { row: row, btn: btn, box: box };
+      return c;
+    }
+    function paint() {
+      if (!enabled) return;
+      var found = rows(), live = {};
+      found.forEach(function (f) { live[f.pid] = 1; });
+      // A project row Hark removed or re-created leaves our list behind;
+      // take it away so nothing stray sits in Hark's sidebar.
+      Object.keys(marks).forEach(function (pid) { if (!live[pid] || !marks[pid].row.isConnected) drop(pid); });
+      found.forEach(function (f) {
+        var c = caret(f.row, f.pid), on = !!openSet[f.pid];
+        var arrow = on ? "▾" : "▸";
+        if (c.btn.textContent !== arrow) c.btn.textContent = arrow;
+        if (!on) { if (c.box.style.display !== "none") c.box.style.display = "none"; return; }
+        if (c.box.parentNode !== f.row.parentNode || c.box.previousSibling !== f.row) {
+          try { f.row.parentNode.insertBefore(c.box, f.row.nextSibling); } catch (e) { return; }
+        }
+        if (c.box.style.display !== "block") c.box.style.display = "block";
+        var data = cache[f.pid];
+        if (!data) { load(f.pid, false); }
+        var sig = JSON.stringify([data && data.at, statusOf(f.pid), selected, wide[f.pid], busy[f.pid]]);
+        if (c.sig === sig) return; c.sig = sig;
+        c.box.textContent = "";
+        if (!data) { c.box.appendChild(el("div", "padding:6px 8px;color:" + SUB, "Loading threads…")); return; }
+        if (data.err) c.box.appendChild(el("div", "padding:6px 8px;color:" + SUB, data.err));
+        var ts = data.threads, n = wide[f.pid] ? MORE : SHOW;
+        if (!ts.length && !data.err) c.box.appendChild(el("div", "padding:6px 8px;color:" + SUB, "No threads yet."));
+        ts.slice(0, n).forEach(function (t, i) {
+          var dot = dotFor(f.pid, t, i);
+          var sel = selected === f.pid + ":" + t.id;
+          var r = el("div", "display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;cursor:pointer;" + (sel ? "background:rgba(127,127,127,.18)" : ""));
+          r.title = t.title;
+          r.appendChild(el("span", "width:7px;height:7px;box-sizing:border-box;border-radius:50%;flex:none;" + (dot ? "background:" + dot : "border:1px solid " + LINE)));
+          r.appendChild(el("span", "flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", t.title));
+          r.appendChild(el("span", "font-size:11.5px;color:" + SUB + ";white-space:nowrap", when(t.when)));
+          r.onmouseenter = function () { if (!sel) r.style.background = "rgba(127,127,127,.1)"; };
+          r.onmouseleave = function () { if (!sel) r.style.background = ""; };
+          r.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); jump(f.pid, t, f.row); });
+          c.box.appendChild(r);
+        });
+        if (ts.length > SHOW) {
+          var more = el("div", "padding:5px 8px;font-size:12px;color:" + SUB + ";cursor:pointer");
+          more.textContent = wide[f.pid] ? "Show fewer" : "Show " + (Math.min(ts.length, MORE) - SHOW) + " older threads";
+          more.onclick = function (e) { e.stopPropagation(); wide[f.pid] = !wide[f.pid]; paint(); };
+          c.box.appendChild(more);
+        }
+      });
+    }
+    function relevant() {
+      return enabled && !document.hidden && location.host === "app.hark.com" && /^\/(projects?|chat)(\/|$)/.test(location.pathname);
+    }
+    // Repaints shortly after Hark changes its page, instead of on a timer.
+    // Changes inside our own lists are ignored, so painting can't loop.
+    var timer = 0;
+    function schedule() {
+      if (timer) return;
+      timer = setTimeout(function () { timer = 0; if (relevant()) { try { paint(); } catch (e) {} } }, 300);
+    }
+    function ours(n) { return n && n.nodeType === 1 ? !!n.closest(".desk-th") : !!(n && n.parentElement && n.parentElement.closest(".desk-th")); }
+    var observer = new MutationObserver(function (list) {
+      if (!relevant()) return;
+      function allOurs(nodes) { for (var j = 0; j < nodes.length; j++) if (!ours(nodes[j])) return false; return true; }
+      for (var i = 0; i < list.length; i++) {
+        var m = list[i];
+        if (ours(m.target) || (allOurs(m.addedNodes) && allOurs(m.removedNodes))) continue;
+        schedule(); return;
+      }
+    });
+    function watch() { if (document.body) observer.observe(document.body, { childList: true, subtree: true }); }
+    if (document.body) watch(); else document.addEventListener("DOMContentLoaded", watch);
+    // Hark's project statuses are polled elsewhere; when one changes, the
+    // open lists reload so new requests and replies show up.
+    var lastSt = "";
+    setInterval(function () {
+      if (!relevant()) return;
+      var st = JSON.stringify((window.__deskStatus && window.__deskStatus.s) || {});
+      if (st !== lastSt) { lastSt = st; Object.keys(openSet).forEach(function (pid) { if (cache[pid]) load(pid, true); }); schedule(); }
+    }, 3000);
+    window.addEventListener("popstate", schedule);
+    window.__deskThreadsSetting = function (on) {
+      on = !!on;
+      if (on === enabled) return;
+      enabled = on;
+      if (!on) Object.keys(marks).forEach(drop); else schedule();
+    };
   })();
 
   // Project groups were removed in 1.3.0; clear what older versions saved.
