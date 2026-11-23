@@ -55,7 +55,10 @@ jobs:
           $eof = "EOF_" + [guid]::NewGuid().ToString("N")
           "RELEASE_NOTES<<$eof`n$body`n$eof" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Build and publish release
+      # Builds go up as a DRAFT release, visible only to the repo owner.
+      # Download the installer, let your antivirus scan it, then press
+      # "Publish release" on GitHub. Nothing reaches users before that.
+      - name: Build draft release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,6 +79,6 @@ jobs:
             Download the -setup.exe (recommended) or the .msi below. Updates are manual for now: Tray > Check for updates opens the latest release.
             If SmartScreen appears, click "More info", then "Run anyway".
             See the README for features and PRIVACY.md for what the app does and doesn't do.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
 
